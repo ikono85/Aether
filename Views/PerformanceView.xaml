@@ -1,0 +1,79 @@
+<UserControl x:Class="Aether.Views.PerformanceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Aether">
+    <UserControl.Resources>
+        <local:HealthToBrushConverter x:Key="HealthToBrush" />
+
+        <!-- Carte température "vivante" -->
+        <DataTemplate x:Key="TempCard">
+            <Border Style="{StaticResource GlassPanel}" CornerRadius="16" Margin="0,0,12,0" Width="220">
+                <StackPanel Margin="20,18">
+                    <TextBlock Text="{Binding Name}" Style="{StaticResource LabelText}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding TemperatureText}" Style="{StaticResource MetricText}" />
+                        <TextBlock Text="°C" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="3,0,0,6" />
+                    </StackPanel>
+                    <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding TemperatureBar, Mode=OneWay}" Maximum="100"
+                                 Margin="0,8,0,6"
+                                 Foreground="{Binding Health, Converter={StaticResource HealthToBrush}}" />
+                    <TextBlock Text="{Binding HealthLabel}" FontFamily="{StaticResource MonoFont}" FontSize="11"
+                               Foreground="{Binding Health, Converter={StaticResource HealthToBrush}}" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="12,6,0,0">
+            <TextBlock Text="TÉLÉMÉTRIE LIVE" Style="{StaticResource LabelText}" />
+            <TextBlock Text="Performance en continu" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <!-- Graphe -->
+        <Border Grid.Row="1" Style="{StaticResource GlassPanel}" Margin="12,16,0,0">
+            <Grid Margin="20,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="9" Height="9" Fill="#FF2BE8A4" VerticalAlignment="Center" />
+                    <TextBlock Text="CPU" Style="{StaticResource LabelText}" Margin="8,0,20,0" VerticalAlignment="Center" />
+                    <Ellipse Width="9" Height="9" Fill="#FF9B6BFF" VerticalAlignment="Center" />
+                    <TextBlock Text="GPU" Style="{StaticResource LabelText}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <Viewbox Grid.Row="1" Stretch="Fill" Margin="0,14,0,0">
+                    <Grid Width="620" Height="150">
+                        <!-- lignes de grille -->
+                        <Rectangle Height="1" Fill="#10FFFFFF" VerticalAlignment="Top" />
+                        <Rectangle Height="1" Fill="#10FFFFFF" VerticalAlignment="Center" />
+                        <Rectangle Height="1" Fill="#10FFFFFF" VerticalAlignment="Bottom" />
+                        <Polyline Points="{Binding GpuPoints}" Stroke="#FF9B6BFF" StrokeThickness="2"
+                                  StrokeLineJoin="Round" />
+                        <Polyline Points="{Binding CpuPoints}" Stroke="#FF2BE8A4" StrokeThickness="2"
+                                  StrokeLineJoin="Round">
+                            <Polyline.Effect>
+                                <DropShadowEffect BlurRadius="10" ShadowDepth="0" Color="#2BE8A4" Opacity="0.8" />
+                            </Polyline.Effect>
+                        </Polyline>
+                    </Grid>
+                </Viewbox>
+            </Grid>
+        </Border>
+
+        <!-- Cartes température -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="12,16,0,4">
+            <ContentControl Content="{Binding Cpu}" ContentTemplate="{StaticResource TempCard}" />
+            <ContentControl Content="{Binding Gpu}" ContentTemplate="{StaticResource TempCard}" />
+            <ContentControl Content="{Binding Ram}" ContentTemplate="{StaticResource TempCard}" />
+        </StackPanel>
+    </Grid>
+</UserControl>

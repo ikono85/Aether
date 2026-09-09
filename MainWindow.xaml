@@ -1,0 +1,191 @@
+<Window x:Class="Aether.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Aether.ViewModels"
+        xmlns:v="clr-namespace:Aether.Views"
+        xmlns:local="clr-namespace:Aether"
+        Title="AETHER — PC Operating System"
+        Height="820" Width="1300" MinHeight="680" MinWidth="1080"
+        WindowStartupLocation="CenterScreen"
+        Background="Transparent" AllowsTransparency="True" WindowStyle="None">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="44" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" />
+    </WindowChrome.WindowChrome>
+
+    <Window.DataContext>
+        <vm:MainViewModel />
+    </Window.DataContext>
+
+    <Window.Resources>
+        <local:StateToBrushConverter x:Key="StateToBrush" />
+        <local:HealthToBrushConverter x:Key="HealthToBrush" />
+        <local:BoolToVisConverter x:Key="BoolToVis" />
+
+        <!-- Association ViewModel -> Vue -->
+        <DataTemplate DataType="{x:Type vm:DashboardViewModel}"><v:DashboardView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:NetworkViewModel}"><v:NetworkView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SecurityViewModel}"><v:SecurityView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:OptimizationViewModel}"><v:OptimizationView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:WindowsServicesOptimizationViewModel}"><v:WindowsServicesOptimizationView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:PerformanceViewModel}"><v:PerformanceView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SettingsViewModel}"><v:SettingsView /></DataTemplate>
+    </Window.Resources>
+
+    <!-- Cadre extérieur : carbone profond + halo -->
+    <Border CornerRadius="16" BorderThickness="1" BorderBrush="{StaticResource GlassStrokeBrush}">
+        <Border.Background>
+            <RadialGradientBrush GradientOrigin="0.15,0.1" Center="0.15,0.1" RadiusX="1.1" RadiusY="1.1">
+                <GradientStop Color="#FF0B0E15" Offset="0" />
+                <GradientStop Color="{StaticResource CarbonDeepColor}" Offset="0.9" />
+            </RadialGradientBrush>
+        </Border.Background>
+
+        <Grid>
+            <!-- Halo d'accent au centre, suit l'état -->
+            <Ellipse Width="900" Height="900" Opacity="0.10" IsHitTestVisible="False"
+                     HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="{Binding State, Converter={StaticResource StateToBrush}}" Offset="0" />
+                        <GradientStop Color="#00000000" Offset="0.7" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+                <Ellipse.Triggers>
+                    <EventTrigger RoutedEvent="Loaded">
+                        <BeginStoryboard>
+                            <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                 From="0.06" To="0.14" Duration="0:0:4" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                </Ellipse.Triggers>
+            </Ellipse>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="44" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="248" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- ===== BARRE DE TITRE ===== -->
+                <Grid Grid.Row="0" Grid.ColumnSpan="2">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="26,0,0,0">
+                        <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                                 Fill="{Binding State, Converter={StaticResource StateToBrush}}" />
+                        <TextBlock Text="AETHER" FontFamily="{StaticResource MonoFont}" FontSize="13"
+                                   Foreground="{StaticResource TextPrimaryBrush}" Margin="10,0,0,0"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="PC OPERATING SYSTEM" Style="{StaticResource LabelText}"
+                                   VerticalAlignment="Center" Margin="12,1,0,0" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Margin="0,0,10,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button Content="—" Click="Minimize" Width="40" Height="30" Style="{StaticResource TitleBtn}" />
+                        <Button Content="□" Click="MaxRestore" Width="40" Height="30" Style="{StaticResource TitleBtn}" />
+                        <Button Content="✕" Click="CloseWin" Width="40" Height="30" Style="{StaticResource TitleBtn}" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== NOYAU SYSTÈME + NAVIGATION ===== -->
+                <Border Grid.Row="1" Grid.Column="0" Margin="16,0,8,16" Style="{StaticResource GlassPanel}">
+                    <Grid Margin="12,22,12,18">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Noyau animé -->
+                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                            <Grid Width="120" Height="120">
+                                <Ellipse Width="120" Height="120" Stroke="#22FFFFFF" StrokeThickness="1" />
+                                <Ellipse x:Name="CoreRing" Width="96" Height="96" StrokeThickness="2"
+                                         Stroke="{Binding State, Converter={StaticResource StateToBrush}}"
+                                         StrokeDashArray="6 4" RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform><RotateTransform x:Name="CoreRot" /></Ellipse.RenderTransform>
+                                    <Ellipse.Triggers>
+                                        <EventTrigger RoutedEvent="Loaded">
+                                            <BeginStoryboard>
+                                                <Storyboard RepeatBehavior="Forever">
+                                                    <DoubleAnimation Storyboard.TargetName="CoreRot"
+                                                        Storyboard.TargetProperty="Angle" From="0" To="360" Duration="0:0:14" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </EventTrigger>
+                                    </Ellipse.Triggers>
+                                </Ellipse>
+                                <Ellipse Width="46" Height="46"
+                                         Fill="{Binding State, Converter={StaticResource StateToBrush}}" Opacity="0.9">
+                                    <Ellipse.Effect>
+                                        <DropShadowEffect BlurRadius="34" ShadowDepth="0" Opacity="1"
+                                            Color="{Binding State, Converter={StaticResource StateToBrush}}" />
+                                    </Ellipse.Effect>
+                                    <Ellipse.Triggers>
+                                        <EventTrigger RoutedEvent="Loaded">
+                                            <BeginStoryboard>
+                                                <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                                    <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                        From="0.55" To="1" Duration="0:0:1.6" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </EventTrigger>
+                                    </Ellipse.Triggers>
+                                </Ellipse>
+                                <TextBlock Text="◉" FontSize="20" Foreground="#FF07090D"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="SYSTEM CORE" Style="{StaticResource LabelText}"
+                                       HorizontalAlignment="Center" Margin="0,14,0,2" />
+                            <TextBlock Text="{Binding StateLabel}" FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11" HorizontalAlignment="Center"
+                                       Foreground="{Binding State, Converter={StaticResource StateToBrush}}" />
+                        </StackPanel>
+
+                        <!-- Navigation -->
+                        <StackPanel Grid.Row="1" Margin="4,28,4,0">
+                            <RadioButton Style="{StaticResource NavButton}" Content="◱   Dashboard" IsChecked="True"
+                                Command="{Binding NavigateCommand}" CommandParameter="Dashboard" />
+                            <RadioButton Style="{StaticResource NavButton}" Content="⟀   Network"
+                                Command="{Binding NavigateCommand}" CommandParameter="Network" />
+                            <RadioButton Style="{StaticResource NavButton}" Content="⛨   Security"
+                                Command="{Binding NavigateCommand}" CommandParameter="Security" />
+                            <RadioButton Style="{StaticResource NavButton}" Content="⚙   Optimization"
+                                Command="{Binding NavigateCommand}" CommandParameter="Optimization" />
+                            <RadioButton Style="{StaticResource NavButton}" Content="⛭   Services"
+                                Command="{Binding NavigateCommand}" CommandParameter="WindowsServices" />
+                            <RadioButton Style="{StaticResource NavButton}" Content="◭   Performance"
+                                Command="{Binding NavigateCommand}" CommandParameter="Performance" />
+                            <RadioButton Style="{StaticResource NavButton}" Content="⚑   Settings"
+                                Command="{Binding NavigateCommand}" CommandParameter="Settings" />
+                        </StackPanel>
+
+                        <!-- Score compact en bas -->
+                        <StackPanel Grid.Row="2" Margin="8,0,8,0">
+                            <TextBlock Text="HEALTH SCORE" Style="{StaticResource LabelText}" />
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,6">
+                                <TextBlock Text="{Binding HealthScore, StringFormat={}{0:0}}"
+                                           FontFamily="{StaticResource MonoFont}" FontSize="34" FontWeight="Light"
+                                           Foreground="{Binding State, Converter={StaticResource StateToBrush}}" />
+                                <TextBlock Text="%" Foreground="{StaticResource TextMutedBrush}"
+                                           VerticalAlignment="Bottom" Margin="4,0,0,8" />
+                            </StackPanel>
+                            <ProgressBar Style="{StaticResource HoloBar}" Minimum="0" Maximum="100"
+                                         Value="{Binding HealthScore}"
+                                         Foreground="{Binding State, Converter={StaticResource StateToBrush}}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- ===== CONTENU ===== -->
+                <ContentControl Grid.Row="1" Grid.Column="1" Margin="8,0,16,16"
+                                Content="{Binding Current}" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
