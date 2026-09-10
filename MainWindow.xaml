@@ -25,7 +25,6 @@
         <!-- Association ViewModel -> Vue -->
         <DataTemplate DataType="{x:Type vm:DashboardViewModel}"><v:DashboardView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:NetworkViewModel}"><v:NetworkView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:SecurityViewModel}"><v:SecurityView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:OptimizationViewModel}"><v:OptimizationView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:WindowsServicesOptimizationViewModel}"><v:WindowsServicesOptimizationView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:PerformanceViewModel}"><v:PerformanceView /></DataTemplate>
@@ -153,8 +152,6 @@
                                 Command="{Binding NavigateCommand}" CommandParameter="Dashboard" />
                             <RadioButton Style="{StaticResource NavButton}" Content="⟀   Network"
                                 Command="{Binding NavigateCommand}" CommandParameter="Network" />
-                            <RadioButton Style="{StaticResource NavButton}" Content="⛨   Security"
-                                Command="{Binding NavigateCommand}" CommandParameter="Security" />
                             <RadioButton Style="{StaticResource NavButton}" Content="⚙   Optimization"
                                 Command="{Binding NavigateCommand}" CommandParameter="Optimization" />
                             <RadioButton Style="{StaticResource NavButton}" Content="⛭   Services"

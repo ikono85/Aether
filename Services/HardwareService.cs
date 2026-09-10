@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Windows.Threading;
 using Aether.Models;
 using LibreHardwareMonitor.Hardware;
@@ -35,6 +36,12 @@ public class HardwareService : IDisposable
     public HardwareModule Net { get; } = new() { Name = "NETWORK", Icon = "" };
 
     public IReadOnlyList<HardwareModule> Modules { get; }
+
+    /// <summary>Capteurs détectés, composant par composant (carte mère incluse).</summary>
+    public ObservableCollection<HardwareSensor> Temperatures { get; } = new();
+    public ObservableCollection<HardwareSensor> Fans { get; } = new();
+    public ObservableCollection<HardwareSensor> Powers { get; } = new();
+    private readonly Dictionary<string, HardwareSensor> _sensorById = new();
 
     /// <summary>Débits réseau lus sur le matériel (Mb/s), NaN si indisponibles.</summary>
     public double DownloadMbps { get; private set; } = double.NaN;
@@ -74,7 +81,9 @@ public class HardwareService : IDisposable
                 IsCpuEnabled = true,
                 IsGpuEnabled = true,
                 IsMemoryEnabled = true,
-                IsStorageEnabled = true
+                IsStorageEnabled = true,
+                IsMotherboardEnabled = true,
+                IsControllerEnabled = true
             };
             _computer.Open();
             SensorsAvailable = true;
@@ -125,6 +134,10 @@ public class HardwareService : IDisposable
                     found.Add("Stockage");
                     break;
 
+                case HardwareType.Motherboard:
+                    found.Add("Carte mère");
+                    break;
+
             }
         }
 
@@ -157,6 +170,7 @@ public class HardwareService : IDisposable
             foreach (var hw in _computer.Hardware)
             {
                 hw.Accept(_visitor);
+                CollectSensors(hw);
 
                 switch (hw.HardwareType)
                 {
@@ -240,6 +254,49 @@ public class HardwareService : IDisposable
             Net.Detail = double.IsNaN(_network.LinkSpeedMbps)
                 ? _network.InterfaceName
                 : $"{_network.InterfaceName} · {_network.LinkSpeedMbps:0} Mb/s";
+    }
+
+    /// <summary>
+    /// Recopie les capteurs de température, de ventilateur et de puissance du composant et de
+    /// ses sous-composants (la puce Super I/O de la carte mère est un sous-composant).
+    /// </summary>
+    private void CollectSensors(IHardware hw)
+    {
+        string component = hw.Parent is null ? hw.Name : $"{hw.Parent.Name} · {hw.Name}";
+
+        foreach (var sensor in hw.Sensors)
+        {
+            // Plages physiques : les entrées non branchées renvoient -55, 127, 65535…
+            var (target, unit, min, max) = sensor.SensorType switch
+            {
+                SensorType.Temperature => (Temperatures, "°C", 0f, 125f),
+                SensorType.Fan => (Fans, "tr/min", -1f, 10000f),
+                SensorType.Power => (Powers, "W", -1f, 2000f),
+                _ => ((ObservableCollection<HardwareSensor>?)null, "", 0f, 0f)
+            };
+            if (target is null) continue;
+
+            // « Distance to TjMax » est un écart avant la limite thermique, pas une température.
+            if (sensor.Name.Contains("Distance to TjMax", StringComparison.OrdinalIgnoreCase)) continue;
+
+            double value = sensor.Value is float v && v > min && v < max ? v : double.NaN;
+
+            var id = sensor.Identifier.ToString();
+            if (!_sensorById.TryGetValue(id, out var entry))
+            {
+                // Un capteur n'apparaît qu'après une vraie mesure : les en-têtes de ventilateur
+                // vides (0 tr/min permanent) et les sondes absentes ne polluent pas la liste.
+                if (double.IsNaN(value) || value <= 0) continue;
+
+                entry = new HardwareSensor { Component = component, Name = sensor.Name, Unit = unit };
+                _sensorById[id] = entry;
+                target.Add(entry);
+            }
+
+            entry.Value = value;
+        }
+
+        foreach (var sub in hw.SubHardware) CollectSensors(sub);
     }
 
     // ------------------------------------------------------------------ helpers

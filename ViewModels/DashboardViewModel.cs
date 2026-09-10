@@ -15,7 +15,6 @@ public partial class DashboardViewModel : ObservableObject
 
     [ObservableProperty] private double _temperatureScore = 90;
     [ObservableProperty] private double _performanceScore = 100;
-    [ObservableProperty] private double _securityScore = 82;
 
     public DashboardViewModel(HardwareService hw)
     {

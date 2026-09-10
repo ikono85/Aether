@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Aether.Models;
@@ -18,12 +20,20 @@ public partial class PerformanceViewModel : ObservableObject
     public HardwareModule Gpu => _hw.Gpu;
     public HardwareModule Ram => _hw.Ram;
 
+    /// <summary>Capteurs LibreHardwareMonitor, groupés par composant.</summary>
+    public ICollectionView Temperatures { get; }
+    public ICollectionView Fans { get; }
+    public ICollectionView Powers { get; }
+
     [ObservableProperty] private PointCollection _cpuPoints = new();
     [ObservableProperty] private PointCollection _gpuPoints = new();
 
     public PerformanceViewModel(HardwareService hw)
     {
         _hw = hw;
+        Temperatures = GroupByComponent(hw.Temperatures);
+        Fans = GroupByComponent(hw.Fans);
+        Powers = GroupByComponent(hw.Powers);
         for (int i = 0; i < Cap; i++) { _cpu.Enqueue(0); _gpu.Enqueue(0); }
         hw.Updated += Refresh;
     }
@@ -34,6 +44,13 @@ public partial class PerformanceViewModel : ObservableObject
         Push(_gpu, _hw.Gpu.Usage);
         CpuPoints = Build(_cpu);
         GpuPoints = Build(_gpu);
+    }
+
+    private static ICollectionView GroupByComponent(IEnumerable<HardwareSensor> sensors)
+    {
+        var view = CollectionViewSource.GetDefaultView(sensors);
+        view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(HardwareSensor.Component)));
+        return view;
     }
 
     /// <summary>Une mesure indisponible est tracée à zéro : un NaN casserait la polyligne.</summary>

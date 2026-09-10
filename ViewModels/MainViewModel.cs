@@ -14,7 +14,6 @@ public partial class MainViewModel : ObservableObject
 
     public DashboardViewModel Dashboard { get; }
     public NetworkViewModel Network { get; }
-    public SecurityViewModel Security { get; }
     public OptimizationViewModel Optimization { get; }
     public WindowsServicesOptimizationViewModel WindowsServices { get; }
     public PerformanceViewModel Performance { get; }
@@ -33,7 +32,6 @@ public partial class MainViewModel : ObservableObject
         Hw = new HardwareService(NetSvc);
         Dashboard = new DashboardViewModel(Hw);
         Network = new NetworkViewModel(NetSvc);
-        Security = new SecurityViewModel(this);
         Optimization = new OptimizationViewModel();
         WindowsServices = new WindowsServicesOptimizationViewModel();
         Performance = new PerformanceViewModel(Hw);
@@ -52,7 +50,6 @@ public partial class MainViewModel : ObservableObject
         Current = page switch
         {
             "Network" => Network,
-            "Security" => Security,
             "Optimization" => Optimization,
             "WindowsServices" => WindowsServices,
             "Performance" => Performance,
@@ -77,23 +74,21 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Calcule le score de santé global et l'état, puis diffuse la couleur d'accent.</summary>
     private void Recompute()
     {
-        // Analyse IA prioritaire (scan en cours)
-        if (Security.IsScanning) { SetState(SystemState.Analyzing); return; }
-
         // Les capteurs absents sont écartés du calcul : leur poids est redistribué sur les
         // mesures réellement disponibles, plutôt que compté comme un score nul.
         var hottest = Best(Hw.Cpu.Temperature, Hw.Gpu.Temperature);
         double? thermal = hottest is null ? null : 100 - Math.Max(0, hottest.Value - 60) * 2.2;
 
         double? load = WeightedLoad();
-        double security = Security.SecurityScore;
 
-        var parts = new List<(double Value, double Weight)> { (security, 0.30) };
-        if (thermal is not null) parts.Add((thermal.Value, 0.35));
-        if (load is not null) parts.Add((load.Value, 0.35));
+        var parts = new List<(double Value, double Weight)>();
+        if (thermal is not null) parts.Add((thermal.Value, 0.5));
+        if (load is not null) parts.Add((load.Value, 0.5));
 
-        double totalWeight = parts.Sum(p => p.Weight);
-        double score = Math.Clamp(parts.Sum(p => p.Value * p.Weight) / totalWeight, 0, 100);
+        // Aucun capteur disponible : on conserve le dernier score connu.
+        double score = parts.Count == 0
+            ? _healthRaw
+            : Math.Clamp(parts.Sum(p => p.Value * p.Weight) / parts.Sum(p => p.Weight), 0, 100);
 
         // Lissage conservé en interne en virgule flottante : arrondir ici bloquerait le
         // score dès que l'écart avec la cible devient inférieur à un point.

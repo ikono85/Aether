@@ -19,7 +19,12 @@ public partial class OptimizationModule : ObservableObject
     /// <summary>Vrai si l'action a besoin des droits administrateur pour aboutir.</summary>
     public bool RequiresAdmin { get; set; }
 
-    [ObservableProperty] private bool _enabled;
+    /// <summary>
+    /// Vrai pour une action ponctuelle qui ne sauvegarde rien (nettoyage, TRIM, RAM, détection) :
+    /// elle s'exécute puis se relance, mais ne se désactive pas.
+    /// </summary>
+    public bool IsOneShot { get; set; }
+
     [ObservableProperty] private bool _isExpanded;
 
     /// <summary>Ce que l'action a réellement fait lors du dernier passage.</summary>
@@ -32,7 +37,40 @@ public partial class OptimizationModule : ObservableObject
     [ObservableProperty] private bool _isRunning;
 
     public bool HasResult => LastResult.Length > 0;
+
+    /// <summary>Vrai si l'optimisation est en place ou vient d'être exécutée avec succès.</summary>
+    public bool IsActive => IsApplied || LastOutcome == ActionOutcome.Applied;
+
+    /// <summary>État affiché sur la carte.</summary>
+    public string StateLabel =>
+        IsRunning ? "EN COURS…" :
+        IsActive ? "ACTIVÉ" :
+        LastOutcome switch
+        {
+            ActionOutcome.Reverted => "DÉSACTIVÉ",
+            ActionOutcome.Skipped => "SANS EFFET",
+            ActionOutcome.Failed => "ÉCHEC",
+            _ => "INACTIF"
+        };
+
+    /// <summary>Libellé du bouton de la carte : ce qu'un clic va faire.</summary>
+    public string ActionLabel =>
+        IsRunning ? "⏳  En cours…" :
+        IsApplied ? "⏻  Désactiver" :
+        LastOutcome == ActionOutcome.Applied ? "↻  Relancer" :
+        "⚡  Activer";
+
     partial void OnLastResultChanged(string value) => OnPropertyChanged(nameof(HasResult));
+    partial void OnLastOutcomeChanged(ActionOutcome? value) => NotifyState();
+    partial void OnIsAppliedChanged(bool value) => NotifyState();
+    partial void OnIsRunningChanged(bool value) => NotifyState();
+
+    private void NotifyState()
+    {
+        OnPropertyChanged(nameof(IsActive));
+        OnPropertyChanged(nameof(StateLabel));
+        OnPropertyChanged(nameof(ActionLabel));
+    }
 
     [RelayCommand]
     private void ToggleExpand() => IsExpanded = !IsExpanded;
@@ -45,17 +83,17 @@ public partial class OptimizationViewModel : ObservableObject
 
     public ObservableCollection<OptimizationModule> Modules { get; } = new()
     {
-        new() { Id = "gaming_boost", Icon = "⚡", Title = "Gaming Boost", Description = "Plan d'alimentation performances + mode Jeu", Enabled = true,
+        new() { Id = "gaming_boost", Icon = "⚡", Title = "Gaming Boost", Description = "Plan d'alimentation performances + mode Jeu",
             Details = "Bascule Windows sur le plan d'alimentation « Performances élevées » (le CPU ne descend plus en fréquence au repos) et active le mode Jeu, qui donne la priorité au jeu au premier plan. Le plan d'alimentation d'origine est sauvegardé et restaurable." },
-        new() { Id = "cleanup", Icon = "🧹", Title = "Cleanup Engine", Description = "Supprime les fichiers temporaires",
+        new() { Id = "cleanup", Icon = "🧹", Title = "Cleanup Engine", Description = "Supprime les fichiers temporaires", IsOneShot = true,
             Details = "Supprime réellement les fichiers de %TEMP%, des rapports de plantage et du cache Internet, ainsi que C:\\Windows\\Temp en mode administrateur. Sécurité : tout fichier modifié dans les dernières 24 h est épargné, et les fichiers verrouillés sont ignorés. L'espace libéré est affiché. Non réversible." },
         new() { Id = "startup", Icon = "🚀", Title = "Startup Manager", Description = "Désactive les lancements au démarrage",
             Details = "Désactive les programmes tiers lancés au démarrage de Windows, via le même mécanisme que le Gestionnaire des tâches (StartupApproved). Les composants Windows ne sont jamais touchés. Entièrement réversible." },
         new() { Id = "network", Icon = "🌐", Title = "Network Accelerator", Description = "Vide le cache DNS, règle TCP",
             Details = "Vide le cache DNS (résolutions périmées supprimées) et remet l'auto-tuning de la fenêtre TCP sur « normal », la valeur recommandée par Microsoft. La valeur précédente est sauvegardée. Le réglage TCP demande les droits administrateur." },
-        new() { Id = "storage", Icon = "💾", Title = "Storage Optimizer", Description = "TRIM SSD ou défragmentation HDD", RequiresAdmin = true,
+        new() { Id = "storage", Icon = "💾", Title = "Storage Optimizer", Description = "TRIM SSD ou défragmentation HDD", RequiresAdmin = true, IsOneShot = true,
             Details = "Lance l'entretien du disque système avec l'opération correcte pour le média : commande TRIM sur SSD, défragmentation sur disque mécanique. Windows détecte lui-même le type de disque, un SSD n'est donc jamais défragmenté. Peut durer plusieurs minutes." },
-        new() { Id = "memory", Icon = "🧠", Title = "Memory Compressor", Description = "Rend la RAM inactive au système",
+        new() { Id = "memory", Icon = "🧠", Title = "Memory Compressor", Description = "Rend la RAM inactive au système", IsOneShot = true,
             Details = "Vide le jeu de travail des processus accessibles : les pages inactives repartent vers le fichier d'échange et la RAM redevient disponible. Le gain réel est affiché en Mo. Windows recharge les pages à la demande, il n'y a donc rien à annuler." },
         new() { Id = "visualfx", Icon = "🎛️", Title = "Visual FX Off", Description = "Désactive les effets visuels Windows",
             Details = "Applique le profil « meilleures performances » de Windows : animations, ombres, transparences et effets de fenêtres coupés. Le changement est visible immédiatement, sans redéconnexion. Les réglages d'origine sont sauvegardés et restaurables." },
@@ -63,7 +101,7 @@ public partial class OptimizationViewModel : ObservableObject
             Details = "Désactive la suspension sélective USB dans le plan d'alimentation actif, et en mode administrateur, l'option « Autoriser l'ordinateur à éteindre ce périphérique » sur les contrôleurs USB. Évite les coupures de souris, casque, manette ou disque externe. Sur portable, réduit légèrement l'autonomie. Réversible." },
         new() { Id = "gamebar", Icon = "🎮", Title = "Game Bar Off", Description = "Désactive la Xbox Game Bar",
             Details = "Coupe la Xbox Game Bar et la capture en arrière-plan (Game DVR), qui tournent en permanence et grignotent des FPS en jeu. En mode administrateur, la désactivation s'applique à tout le système. Réversible." },
-        new() { Id = "overlay", Icon = "🧩", Title = "Overlay Scanner", Description = "Détecte les overlays de jeu actifs",
+        new() { Id = "overlay", Icon = "🧩", Title = "Overlay Scanner", Description = "Détecte les overlays de jeu actifs", IsOneShot = true,
             Details = "Détection seule : recense les overlays en cours d'exécution (Discord, Steam, GeForce Experience, MSI Afterburner, RivaTuner, Xbox) et indique où les désactiver dans chaque application. AETHER ne modifie pas la configuration interne de ces logiciels, pour ne pas casser leurs réglages." },
         new() { Id = "services", Icon = "⚙️", Title = "Service Trimmer", Description = "Services inutiles en démarrage manuel", RequiresAdmin = true,
             Details = "Passe en démarrage manuel une courte liste de services non essentiels : Télécopie, Registre à distance, Mode démonstration, Cartes hors connexion, Partage Windows Media, Téléphonie. Ils restent disponibles à la demande, ils ne démarrent simplement plus tout seuls. Chaque type de démarrage d'origine est sauvegardé." },
@@ -73,48 +111,41 @@ public partial class OptimizationViewModel : ObservableObject
 
     [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private double _progress;
-    [ObservableProperty] private string _status = "Prêt à optimiser";
+    [ObservableProperty] private string _status = "Cliquez sur « Activer » sur une carte pour appliquer l'optimisation.";
 
     /// <summary>Vrai si AETHER tourne avec les droits administrateur.</summary>
     public bool IsElevated => _engine.IsElevated;
 
-    /// <summary>Vrai si des modules sélectionnés exigent une élévation dont on ne dispose pas.</summary>
-    public bool NeedsElevation => !IsElevated && Modules.Any(m => m.Enabled && m.RequiresAdmin);
+    /// <summary>Vrai si des modules exigent une élévation dont on ne dispose pas.</summary>
+    public bool NeedsElevation => !IsElevated && Modules.Any(m => m.RequiresAdmin);
 
     public OptimizationViewModel()
     {
         // Un module appliqué lors d'une session précédente reste annulable.
         foreach (var m in Modules)
-        {
             m.IsApplied = _engine.IsApplied(m.Id);
-            m.PropertyChanged += (_, e) =>
-            {
-                if (e.PropertyName == nameof(OptimizationModule.Enabled))
-                    OnPropertyChanged(nameof(NeedsElevation));
-            };
-        }
     }
 
-    private IEnumerable<OptimizationModule> Selected => Modules.Where(m => m.Enabled);
-
+    /// <summary>
+    /// Bouton d'une carte : désactive le module s'il est appliqué, sinon l'applique immédiatement.
+    /// </summary>
     [RelayCommand(CanExecute = nameof(CanRun))]
-    private async Task Optimize()
+    private async Task Toggle(OptimizationModule? module)
     {
-        var selected = Selected.ToList();
-        if (selected.Count == 0) { Status = "Aucun module sélectionné."; return; }
-
-        await Execute(selected, revert: false);
+        if (module is null) return;
+        await Execute(new List<OptimizationModule> { module }, revert: module.IsApplied);
     }
 
     [RelayCommand(CanExecute = nameof(CanRevert))]
     private async Task Revert()
     {
         var applied = Modules.Where(m => m.IsApplied).ToList();
-        if (applied.Count == 0) { Status = "Rien à annuler."; return; }
+        if (applied.Count == 0) { Status = "Rien à désactiver."; return; }
 
         await Execute(applied, revert: true);
     }
 
+    // Une seule exécution à la fois : les actions partagent le même magasin de restauration.
     private bool CanRun() => !IsRunning;
     private bool CanRevert() => !IsRunning && Modules.Any(m => m.IsApplied);
 
@@ -122,13 +153,17 @@ public partial class OptimizationViewModel : ObservableObject
     {
         IsRunning = true;
         Progress = 0;
-        OptimizeCommand.NotifyCanExecuteChanged();
+        ToggleCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
 
         _cts = new CancellationTokenSource();
         var byId = targets.ToDictionary(m => m.Id);
 
         foreach (var m in targets) { m.IsRunning = true; m.LastResult = ""; m.LastOutcome = null; }
+
+        Status = targets.Count == 1
+            ? $"{targets[0].Title} — {(revert ? "désactivation" : "activation")} en cours…"
+            : $"Désactivation de {targets.Count} module(s)…";
 
         int applied = 0, skipped = 0, failed = 0;
 
@@ -159,11 +194,15 @@ public partial class OptimizationViewModel : ObservableObject
             if (revert) await _engine.RevertAsync(ids, progress, _cts.Token);
             else await _engine.RunAsync(ids, progress, _cts.Token);
 
-            var verb = revert ? "annulé(s)" : "appliqué(s)";
-            var parts = new List<string> { $"{applied} module(s) {verb}" };
-            if (skipped > 0) parts.Add($"{skipped} sans effet");
-            if (failed > 0) parts.Add($"{failed} en échec");
-            Status = string.Join(" · ", parts) + ".";
+            // Un seul module : le compte rendu de l'action reste affiché tel quel.
+            if (targets.Count > 1)
+            {
+                var verb = revert ? "désactivé(s)" : "activé(s)";
+                var parts = new List<string> { $"{applied} module(s) {verb}" };
+                if (skipped > 0) parts.Add($"{skipped} sans effet");
+                if (failed > 0) parts.Add($"{failed} en échec");
+                Status = string.Join(" · ", parts) + ".";
+            }
         }
         catch (OperationCanceledException)
         {
@@ -180,7 +219,7 @@ public partial class OptimizationViewModel : ObservableObject
             Progress = 100;
             _cts?.Dispose();
             _cts = null;
-            OptimizeCommand.NotifyCanExecuteChanged();
+            ToggleCommand.NotifyCanExecuteChanged();
             RevertCommand.NotifyCanExecuteChanged();
         }
     }

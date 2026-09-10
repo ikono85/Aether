@@ -123,9 +123,6 @@
                 <TextBlock Text="PERFORMANCE" Style="{StaticResource LabelText}" Margin="0,18,0,5" />
                 <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding PerformanceScore}" Maximum="100" />
 
-                <TextBlock Text="SECURITY" Style="{StaticResource LabelText}" Margin="0,18,0,5" />
-                <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding SecurityScore}" Maximum="100" />
-
                 <Border Height="1" Background="#18FFFFFF" Margin="0,26" />
                 <TextBlock Text="L'organisme est stable. Tous les sous-systèmes répondent."
                            TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource TextMutedBrush}" />

@@ -75,12 +75,24 @@ public class CleanupAction : OptimizationAction
     public override ActionResult Apply(RestoreStore store, CancellationToken ct)
     {
         var targets = new List<string> { Path.GetTempPath() };
+        var localFolders = new List<string>();
 
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (local.Length > 0)
+        if (local.Length > 0) localFolders.Add(local);
+
+        // Compte standard élevé avec les identifiants d'un administrateur : %TEMP% et
+        // %LOCALAPPDATA% désignent alors les dossiers de l'administrateur. On nettoie aussi
+        // ceux de l'utilisateur réellement connecté.
+        if (SessionUser.IsDifferentAccount)
         {
-            targets.Add(Path.Combine(local, "CrashDumps"));
-            targets.Add(Path.Combine(local, "Microsoft", "Windows", "INetCache", "IE"));
+            if (SessionUser.TempPath is { } userTemp) targets.Add(userTemp);
+            if (SessionUser.LocalAppDataPath is { } userLocal) localFolders.Add(userLocal);
+        }
+
+        foreach (var folder in localFolders)
+        {
+            targets.Add(Path.Combine(folder, "CrashDumps"));
+            targets.Add(Path.Combine(folder, "Microsoft", "Windows", "INetCache", "IE"));
         }
 
         if (IsElevated)
@@ -89,7 +101,12 @@ public class CleanupAction : OptimizationAction
         long freed = 0; int files = 0, locked = 0;
         var cutoff = DateTime.UtcNow - MinAge;
 
-        foreach (var dir in targets.Where(Directory.Exists))
+        var dirs = targets
+            .Select(p => Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(Directory.Exists);
+
+        foreach (var dir in dirs)
         {
             ct.ThrowIfCancellationRequested();
             var (b, f, l) = Purge(dir, cutoff, ct);
@@ -109,8 +126,17 @@ public class CleanupAction : OptimizationAction
     {
         long bytes = 0; int files = 0, locked = 0;
 
+        // Un sous-dossier inaccessible est sauté au lieu d'interrompre tout le parcours, et les
+        // jonctions ne sont jamais suivies : on ne supprime rien en dehors du dossier ciblé.
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+
         IEnumerable<string> entries;
-        try { entries = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories); }
+        try { entries = Directory.EnumerateFiles(dir, "*", options); }
         catch { return (0, 0, 0); }
 
         foreach (var file in entries)
@@ -131,7 +157,7 @@ public class CleanupAction : OptimizationAction
         // Dossiers devenus vides.
         try
         {
-            foreach (var sub in Directory.EnumerateDirectories(dir, "*", SearchOption.AllDirectories).Reverse())
+            foreach (var sub in Directory.EnumerateDirectories(dir, "*", options).Reverse())
             {
                 try { if (!Directory.EnumerateFileSystemEntries(sub).Any()) Directory.Delete(sub); } catch { }
             }

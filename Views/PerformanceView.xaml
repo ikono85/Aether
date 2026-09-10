@@ -5,6 +5,39 @@
     <UserControl.Resources>
         <local:HealthToBrushConverter x:Key="HealthToBrush" />
 
+        <!-- Liste de capteurs LibreHardwareMonitor -->
+        <DataTemplate x:Key="SensorGroupHeader">
+            <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextMutedBrush}"
+                       FontSize="11" FontWeight="SemiBold" Margin="0,8,0,4"
+                       TextTrimming="CharacterEllipsis" />
+        </DataTemplate>
+        <!-- Message affiché quand la liste liée via Tag (HasItems) est vide -->
+        <Style x:Key="EmptySensorHint" TargetType="TextBlock">
+            <Setter Property="Text" Value="Aucun capteur détecté sur ce PC" />
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="8,8,0,0" />
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="False">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <DataTemplate x:Key="SensorRow">
+            <Grid Margin="8,2,4,2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding Name}" Foreground="{StaticResource TextPrimaryBrush}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="1" Text="{Binding ValueText}" Margin="12,0,0,0"
+                           FontFamily="{StaticResource MonoFont}"
+                           Foreground="{Binding Health, Converter={StaticResource HealthToBrush}}" />
+            </Grid>
+        </DataTemplate>
+
         <!-- Carte température "vivante" -->
         <DataTemplate x:Key="TempCard">
             <Border Style="{StaticResource GlassPanel}" CornerRadius="16" Margin="0,0,12,0" Width="220">
@@ -36,8 +69,52 @@
             <TextBlock Text="Performance en continu" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
         </StackPanel>
 
+        <Grid Grid.Row="1" Margin="12,16,0,0">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="340" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Tous les capteurs de température (LibreHardwareMonitor) -->
+        <Border Grid.Column="1" Style="{StaticResource GlassPanel}" Margin="12,0,0,0">
+            <Grid Margin="20,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="CAPTEURS" Style="{StaticResource LabelText}" />
+                <ScrollViewer Grid.Row="1" Margin="0,6,0,0" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="TEMPÉRATURES" Style="{StaticResource LabelText}" Margin="0,8,0,0" />
+                        <ItemsControl x:Name="TemperatureList" ItemsSource="{Binding Temperatures}" ItemTemplate="{StaticResource SensorRow}">
+                            <ItemsControl.GroupStyle>
+                                <GroupStyle HeaderTemplate="{StaticResource SensorGroupHeader}" />
+                            </ItemsControl.GroupStyle>
+                        </ItemsControl>
+                        <TextBlock Style="{StaticResource EmptySensorHint}" Tag="{Binding HasItems, ElementName=TemperatureList}" />
+
+                        <TextBlock Text="VENTILATEURS" Style="{StaticResource LabelText}" Margin="0,18,0,0" />
+                        <ItemsControl x:Name="FanList" ItemsSource="{Binding Fans}" ItemTemplate="{StaticResource SensorRow}">
+                            <ItemsControl.GroupStyle>
+                                <GroupStyle HeaderTemplate="{StaticResource SensorGroupHeader}" />
+                            </ItemsControl.GroupStyle>
+                        </ItemsControl>
+                        <TextBlock Style="{StaticResource EmptySensorHint}" Tag="{Binding HasItems, ElementName=FanList}" />
+
+                        <TextBlock Text="CONSOMMATION" Style="{StaticResource LabelText}" Margin="0,18,0,0" />
+                        <ItemsControl x:Name="PowerList" ItemsSource="{Binding Powers}" ItemTemplate="{StaticResource SensorRow}">
+                            <ItemsControl.GroupStyle>
+                                <GroupStyle HeaderTemplate="{StaticResource SensorGroupHeader}" />
+                            </ItemsControl.GroupStyle>
+                        </ItemsControl>
+                        <TextBlock Style="{StaticResource EmptySensorHint}" Tag="{Binding HasItems, ElementName=PowerList}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
         <!-- Graphe -->
-        <Border Grid.Row="1" Style="{StaticResource GlassPanel}" Margin="12,16,0,0">
+        <Border Style="{StaticResource GlassPanel}">
             <Grid Margin="20,18">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -68,6 +145,7 @@
                 </Viewbox>
             </Grid>
         </Border>
+        </Grid>
 
         <!-- Cartes température -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="12,16,0,4">

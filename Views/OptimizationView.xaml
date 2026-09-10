@@ -36,114 +36,148 @@
             </Setter>
         </Style>
 
-        <!-- Module activable (ToggleButton holographique) -->
-        <Style x:Key="ModuleToggle" TargetType="ToggleButton">
+        <!-- Bouton d'action d'une carte : Activer / Désactiver / Relancer -->
+        <Style x:Key="CardActionButton" TargetType="Button">
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="VerticalAlignment" Value="Top" />
+            <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="Background" Value="#2200E58F" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentOptimalBrush}" />
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="bd" Width="250" MinHeight="120" Margin="10" CornerRadius="16"
-                                BorderThickness="1" BorderBrush="{StaticResource GlassStrokeBrush}"
-                                Background="#10FFFFFF">
-                            <Grid Margin="18,14">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <Grid>
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Icon}" FontSize="20" />
-                                        <TextBlock Text="{Binding Title}" Margin="10,0,0,0" VerticalAlignment="Center"
-                                                   FontFamily="{StaticResource UiFont}" FontSize="15" FontWeight="SemiBold"
-                                                   Foreground="{StaticResource TextPrimaryBrush}" />
-                                    </StackPanel>
-                                    <!-- Flèche : déroule les détails (n'active pas le module) -->
-                                    <Button Style="{StaticResource ExpandArrow}" HorizontalAlignment="Right"
-                                            VerticalAlignment="Top" Command="{Binding ToggleExpandCommand}"
-                                            ToolTip="Voir ce que fait cette optimisation" />
-                                </Grid>
-                                <TextBlock Grid.Row="1" Text="{Binding Description}" TextWrapping="Wrap"
-                                           Margin="0,10,0,0" FontSize="12"
-                                           Foreground="{StaticResource TextMutedBrush}" />
-                                <StackPanel Grid.Row="2" Margin="0,12,0,0">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Border x:Name="dot" Width="8" Height="8" CornerRadius="4"
-                                                Background="{StaticResource TextMutedBrush}" VerticalAlignment="Center" />
-                                        <TextBlock x:Name="st" Text="INACTIF · cliquer pour activer" Margin="8,0,0,0"
-                                                   Style="{StaticResource LabelText}" />
-                                        <!-- Badge « administrateur requis » -->
-                                        <Border Margin="8,0,0,0" CornerRadius="4" Padding="5,1" Background="#22FFB347"
-                                                VerticalAlignment="Center"
-                                                Visibility="{Binding RequiresAdmin, Converter={StaticResource BoolToVis}}">
-                                            <TextBlock Text="ADMIN" FontSize="9" FontWeight="SemiBold"
-                                                       Foreground="{StaticResource AccentWarnBrush}" />
-                                        </Border>
-                                        <!-- Appliqué : annulable, même après redémarrage d'AETHER -->
-                                        <Border Margin="6,0,0,0" CornerRadius="4" Padding="5,1" Background="#2200E58F"
-                                                VerticalAlignment="Center"
-                                                Visibility="{Binding IsApplied, Converter={StaticResource BoolToVis}}">
-                                            <TextBlock Text="APPLIQUÉ" FontSize="9" FontWeight="SemiBold"
-                                                       Foreground="{StaticResource AccentOptimalBrush}" />
-                                        </Border>
-                                    </StackPanel>
-
-                                    <!-- Compte rendu réel de la dernière exécution -->
-                                    <TextBlock Text="{Binding LastResult}" TextWrapping="Wrap" Margin="0,10,0,0"
-                                               FontSize="11" LineHeight="15"
-                                               Visibility="{Binding HasResult, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding LastOutcome}" Value="Applied">
-                                                        <Setter Property="Foreground" Value="{StaticResource AccentOptimalBrush}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding LastOutcome}" Value="Reverted">
-                                                        <Setter Property="Foreground" Value="{StaticResource AccentOptimalBrush}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding LastOutcome}" Value="Failed">
-                                                        <Setter Property="Foreground" Value="{StaticResource AccentDangerBrush}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-
-                                    <TextBlock Text="⏳ en cours…" Margin="0,8,0,0" FontSize="11"
-                                               Foreground="{DynamicResource AccentBrush}"
-                                               Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}" />
-                                </StackPanel>
-                                <!-- Panneau déroulant -->
-                                <Border Grid.Row="3" Margin="0,12,0,0"
-                                        Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
-                                    <StackPanel>
-                                        <Border Height="1" Background="#18FFFFFF" Margin="0,0,0,10" />
-                                        <TextBlock Text="{Binding Details}" TextWrapping="Wrap" FontSize="12"
-                                                   LineHeight="17" Foreground="{StaticResource TextPrimaryBrush}"
-                                                   Opacity="0.85" />
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" CornerRadius="10" Padding="0,8" BorderThickness="1"
+                                Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="#1AFFFFFF" />
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
-                                <Setter TargetName="bd" Property="Background" Value="#1A9B6BFF" />
-                                <Setter TargetName="dot" Property="Background" Value="{DynamicResource AccentBrush}" />
-                                <Setter TargetName="st" Property="Text" Value="ACTIF" />
-                                <Setter TargetName="st" Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.4" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <!-- Appliqué : l'action proposée est l'annulation, en style neutre -->
+                <DataTrigger Binding="{Binding IsApplied}" Value="True">
+                    <Setter Property="Background" Value="#12FFFFFF" />
+                    <Setter Property="BorderBrush" Value="{StaticResource GlassStrokeBrush}" />
+                </DataTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#33FFFFFF" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
+
+        <!-- Carte d'optimisation : 1 carte = 1 bouton = exécution immédiate -->
+        <DataTemplate x:Key="ModuleCard" DataType="{x:Type vm:OptimizationModule}">
+            <Border x:Name="bd" Width="250" MinHeight="150" Margin="10" CornerRadius="16" VerticalAlignment="Top"
+                    BorderThickness="1" BorderBrush="{StaticResource GlassStrokeBrush}" Background="#10FFFFFF">
+                <Grid Margin="18,14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Icon}" FontSize="20" />
+                            <TextBlock Text="{Binding Title}" Margin="10,0,0,0" VerticalAlignment="Center"
+                                       FontFamily="{StaticResource UiFont}" FontSize="15" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimaryBrush}" />
+                        </StackPanel>
+                        <Button Style="{StaticResource ExpandArrow}" HorizontalAlignment="Right"
+                                VerticalAlignment="Top" Command="{Binding ToggleExpandCommand}"
+                                ToolTip="Voir ce que fait cette optimisation" />
+                    </Grid>
+                    <TextBlock Grid.Row="1" Text="{Binding Description}" TextWrapping="Wrap"
+                               Margin="0,10,0,0" FontSize="12"
+                               Foreground="{StaticResource TextMutedBrush}" />
+
+                    <!-- État + badges -->
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
+                        <Border x:Name="dot" Width="8" Height="8" CornerRadius="4"
+                                Background="{StaticResource TextMutedBrush}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="st" Text="{Binding StateLabel}" Margin="8,0,0,0"
+                                   Style="{StaticResource LabelText}" />
+                        <Border Margin="8,0,0,0" CornerRadius="4" Padding="5,1" Background="#22FFB347"
+                                VerticalAlignment="Center" ToolTip="Nécessite les droits administrateur"
+                                Visibility="{Binding RequiresAdmin, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="ADMIN" FontSize="9" FontWeight="SemiBold"
+                                       Foreground="{StaticResource AccentWarnBrush}" />
+                        </Border>
+                        <Border Margin="6,0,0,0" CornerRadius="4" Padding="5,1" Background="#18FFFFFF"
+                                VerticalAlignment="Center" ToolTip="Action ponctuelle : s'exécute une fois, ne se désactive pas"
+                                Visibility="{Binding IsOneShot, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="PONCTUEL" FontSize="9" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextMutedBrush}" />
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Compte rendu réel de la dernière exécution -->
+                    <TextBlock Grid.Row="3" Text="{Binding LastResult}" TextWrapping="Wrap" Margin="0,10,0,0"
+                               FontSize="11" LineHeight="15"
+                               Visibility="{Binding HasResult, Converter={StaticResource BoolToVis}}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LastOutcome}" Value="Applied">
+                                        <Setter Property="Foreground" Value="{StaticResource AccentOptimalBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding LastOutcome}" Value="Reverted">
+                                        <Setter Property="Foreground" Value="{StaticResource AccentOptimalBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding LastOutcome}" Value="Failed">
+                                        <Setter Property="Foreground" Value="{StaticResource AccentDangerBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <StackPanel Grid.Row="4" Margin="0,14,0,0">
+                        <Button Style="{StaticResource CardActionButton}" Content="{Binding ActionLabel}"
+                                Command="{Binding DataContext.ToggleCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                CommandParameter="{Binding}" />
+
+                        <!-- Panneau déroulant -->
+                        <StackPanel Margin="0,12,0,0"
+                                    Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                            <Border Height="1" Background="#18FFFFFF" Margin="0,0,0,10" />
+                            <TextBlock Text="{Binding Details}" TextWrapping="Wrap" FontSize="12"
+                                       LineHeight="17" Foreground="{StaticResource TextPrimaryBrush}"
+                                       Opacity="0.85" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <DataTemplate.Triggers>
+                <Trigger SourceName="bd" Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#1AFFFFFF" />
+                </Trigger>
+                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AccentOptimalBrush}" />
+                    <Setter TargetName="bd" Property="Background" Value="#1400E58F" />
+                    <Setter TargetName="dot" Property="Background" Value="{StaticResource AccentOptimalBrush}" />
+                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource AccentOptimalBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding LastOutcome}" Value="Failed">
+                    <Setter TargetName="dot" Property="Background" Value="{StaticResource AccentDangerBrush}" />
+                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource AccentDangerBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                    <Setter TargetName="dot" Property="Background" Value="{DynamicResource AccentBrush}" />
+                    <Setter TargetName="st" Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
     </UserControl.Resources>
 
     <Grid>
@@ -156,8 +190,10 @@
         <StackPanel Margin="12,6,0,0">
             <TextBlock Text="PERFORMANCE CORE" Style="{StaticResource LabelText}" />
             <TextBlock Text="Arbre d'optimisation" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
+            <TextBlock Margin="0,6,12,0" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource TextMutedBrush}"
+                       Text="Chaque optimisation s'active individuellement : cliquez sur « Activer » sur la carte de votre choix, elle s'applique immédiatement. Les optimisations réversibles se désactivent avec le même bouton." />
 
-            <!-- Élévation requise par un ou plusieurs modules sélectionnés -->
+            <!-- Élévation requise par un ou plusieurs modules -->
             <Border Margin="0,14,12,0" CornerRadius="12" Padding="16,12" Background="#1AFFB347"
                     BorderThickness="1" BorderBrush="#40FFB347"
                     Visibility="{Binding NeedsElevation, Converter={StaticResource BoolToVis}}">
@@ -168,7 +204,7 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12"
                                Foreground="{StaticResource TextPrimaryBrush}"
-                               Text="Certains modules sélectionnés modifient le système et demandent les droits administrateur. Sans élévation, ils seront ignorés — les autres s'appliqueront normalement." />
+                               Text="Les modules marqués ADMIN modifient le système et demandent les droits administrateur. Sans élévation, ils seront ignorés — les autres s'appliquent normalement." />
                     <Button Grid.Column="1" Margin="16,0,0,0" Content="RELANCER EN ADMIN"
                             Command="{Binding ElevateCommand}" VerticalAlignment="Center"
                             Cursor="Hand" Padding="14,8" FontSize="11" FontWeight="SemiBold"
@@ -179,20 +215,15 @@
         </StackPanel>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,16,0,0">
-            <ItemsControl ItemsSource="{Binding Modules}" HorizontalAlignment="Center">
+            <ItemsControl ItemsSource="{Binding Modules}" HorizontalAlignment="Center"
+                          ItemTemplate="{StaticResource ModuleCard}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="{x:Type vm:OptimizationModule}">
-                        <ToggleButton Style="{StaticResource ModuleToggle}"
-                                      IsChecked="{Binding Enabled, Mode=TwoWay}" />
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
 
-        <!-- Barre d'action -->
+        <!-- Barre d'état : compte rendu, progression, actions globales -->
         <Border Grid.Row="2" Style="{StaticResource GlassPanel}" CornerRadius="18" Margin="12,16,0,4">
             <Grid Margin="24,18">
                 <Grid.ColumnDefinitions>
@@ -201,25 +232,23 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="{Binding Status}" Foreground="{StaticResource TextPrimaryBrush}"
-                               FontFamily="{StaticResource MonoFont}" FontSize="13" />
+                               FontFamily="{StaticResource MonoFont}" FontSize="13" TextWrapping="Wrap" />
                     <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding Progress}" Maximum="100"
                                  Margin="0,10,20,0" Width="420" HorizontalAlignment="Left" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- Annule les modules déjà appliqués, en restaurant l'état sauvegardé -->
-                    <Button Content="↩  RESTAURER" Command="{Binding RevertCommand}" Margin="0,0,12,0"
-                            Cursor="Hand" Padding="16,10" FontSize="12" FontWeight="SemiBold"
-                            Background="#12FFFFFF" BorderBrush="{StaticResource GlassStrokeBrush}"
-                            BorderThickness="1" Foreground="{StaticResource TextPrimaryBrush}" />
-
                     <Button Content="✕  ANNULER" Command="{Binding CancelCommand}" Margin="0,0,12,0"
                             Cursor="Hand" Padding="16,10" FontSize="12" FontWeight="SemiBold"
                             Background="#12FFFFFF" BorderBrush="{StaticResource GlassStrokeBrush}"
                             BorderThickness="1" Foreground="{StaticResource TextPrimaryBrush}"
                             Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}" />
 
-                    <Button Style="{StaticResource PrimaryButton}" Content="⚡  OPTIMISER"
-                            Command="{Binding OptimizeCommand}" />
+                    <!-- Désactive d'un coup tous les modules appliqués, en restaurant l'état sauvegardé -->
+                    <Button Content="↩  TOUT DÉSACTIVER" Command="{Binding RevertCommand}"
+                            ToolTip="Désactive toutes les optimisations réversibles actuellement appliquées"
+                            Cursor="Hand" Padding="16,10" FontSize="12" FontWeight="SemiBold"
+                            Background="#12FFFFFF" BorderBrush="{StaticResource GlassStrokeBrush}"
+                            BorderThickness="1" Foreground="{StaticResource TextPrimaryBrush}" />
                 </StackPanel>
             </Grid>
         </Border>

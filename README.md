@@ -2,50 +2,76 @@
 
 Un centre de contrôle PC nouvelle génération. Interface « Cyber Minimalism » : verre,
 halos, lignes lumineuses fines, accent dynamique qui change selon l'état du PC
-(🟢 optimal · 🟠 charge élevée · 🔴 problème · 🟣 analyse IA).
+(🟢 optimal · 🟠 charge élevée · 🔴 problème).
 
 ## Lancer
-```bash
-dotnet run
-```
+
 Requiert le SDK .NET 8+ (build ciblée `net8.0-windows`, WPF).
 
-**Lancer en administrateur** pour disposer de toutes les mesures et actions : la lecture
-des températures CPU passe par un pilote noyau, et les modules d'optimisation et de
-services écrivent dans HKLM. Sans élévation, AETHER fonctionne mais affiche « — » sur les
-capteurs inaccessibles et signale les actions qu'il ne peut pas appliquer — il n'invente
-jamais de valeur de remplacement.
+AETHER **demande les droits administrateur au démarrage** (`app.manifest` :
+`requireAdministrator`) : la lecture des températures CPU et carte mère passe par un pilote
+noyau, et les modules d'optimisation et de services écrivent dans HKLM.
+
+Depuis un terminal non élevé, `dotnet run` échoue avec « L'opération demandée nécessite une
+élévation ». Compiler puis lancer avec l'invite UAC :
+
+```bash
+dotnet build
+```
+
+```bash
+Start-Process ".\bin\Debug\net8.0-windows\Aether.exe" -Verb RunAs
+```
+
+Ou ouvrir le terminal « en tant qu'administrateur », puis `dotnet run`.
+
+### Compte standard (PC de travail)
+
+Sur un compte sans droits administrateur, l'invite UAC demande les identifiants d'un **autre
+compte** : AETHER tourne alors sous ce compte-là, et `%TEMP%`, `%LOCALAPPDATA%` ou `HKCU`
+désignent ses dossiers et son registre, pas ceux de la personne connectée.
+
+- **Cleanup Engine** en tient compte : `Services/Optimization/SessionUser.cs` retrouve
+  l'utilisateur de la session Windows (WTS → SID → `ProfileList`) et nettoie aussi son
+  `%TEMP%` et ses dumps.
+- **Limite connue** — Gaming Boost (mode Jeu), Visual FX Off, Game Bar Off (partie
+  utilisateur) et Startup Manager écrivent encore dans le `HKCU` du compte élevé : dans ce
+  cas, ils n'ont pas d'effet pour l'utilisateur connecté.
+
+Sur un poste géré par une entreprise, vérifier avec le service informatique avant
+d'appliquer des modifications système (services, télémétrie, réseau).
 
 ### Dépendances
 
 | Paquet | Rôle |
 |---|---|
 | `CommunityToolkit.Mvvm` | `[ObservableProperty]` et `[RelayCommand]` |
-| `LibreHardwareMonitorLib` | températures et charges matérielles |
+| `LibreHardwareMonitorLib` | températures, charges, ventilateurs, puissances |
 | `System.Management` | WMI (`Win32_Service.ChangeStartMode`) |
 | `System.ServiceProcess.ServiceController` | état et contrôle des services Windows |
 
 ## Architecture (MVVM)
 - `Services/HardwareService.cs` — télémétrie matérielle réelle via **LibreHardwareMonitor**
-  (températures, charges, mémoire, disques).
+  (températures, charges, mémoire, disques, carte mère, ventilateurs, puissances).
+- `Models/HardwareSensor.cs` — un capteur individuel (température, ventilateur ou puissance).
 - `Services/NetworkService.cs` — mesures réseau réelles (traceroute, ping, débit d'interface),
   **source unique** des chiffres réseau du Dashboard comme de l'onglet Network.
-- `Services/SecurityScanner.cs` — analyse en lecture seule des processus et du démarrage.
-- `Services/Optimization/` — moteur d'optimisation réel + journal de restauration.
+- `Services/Optimization/` — moteur d'optimisation réel + journal de restauration
+  + `SessionUser` (utilisateur réellement connecté).
 - `Services/WindowsServices/` — catalogue, gestionnaire (ServiceController + WMI),
   journal des changements et préférences du module Services.
 - `ViewModels/` — `MainViewModel` pilote l'accent global + la navigation ; une VM par onglet.
-- `Views/` — Dashboard, Network, Security, Optimization, Services, Performance, Settings.
+- `Views/` — Dashboard, Network, Optimization, Services, Performance, Settings.
 - `Themes/Theme.xaml` — palette carbone/graphite + styles verre.
 - `MainWindow.xaml` — chrome custom, **noyau système** animé + navigation.
 
 ## Onglets
 - **Dashboard** — silhouette PC centrale + modules holographiques flottants (CPU/GPU/RAM/SSD/NET) + SYSTEM STATUS.
 - **Network** — connexion neuronale (PC au centre, serveurs autour, flux animés) + ping/débit/packet loss.
-- **Security** — scanner circulaire animé + carte de menace (Safe/Attention/Threat).
-- **Optimization** — modules d'optimisation **réels** (voir ci-dessous).
+- **Optimization** — modules d'optimisation **réels**, un bouton « Activer » par carte (voir ci-dessous).
 - **Services** — état réel des services Windows, désactivation unitaire ou par profil (voir ci-dessous).
-- **Performance** — graphes live CPU/GPU + monitoring température vivant.
+- **Performance** — graphes live CPU/GPU, cartes température CPU/GPU/RAM et panneau
+  **CAPTEURS** : toutes les températures, ventilateurs et puissances détectés.
 - **Settings** — configuration du cockpit.
 
 ## Télémétrie — d'où viennent les chiffres
@@ -78,11 +104,31 @@ SSD      temp=33   usage=1%    [2 disques · le plus chaud]
 NETWORK  temp=—    usage=0%    [Ethernet 2 · 1000 Mb/s]
 ```
 
+### Panneau CAPTEURS (onglet Performance)
+
+En plus des modules ci-dessus, AETHER recopie **chaque capteur** exposé par
+LibreHardwareMonitor (carte mère et contrôleurs inclus, sous-composants Super I/O compris),
+groupé par composant et rafraîchi chaque seconde :
+
+| Section | Type LHM | Unité | Plage retenue |
+|---|---|---|---|
+| Températures | `Temperature` | °C | 0 – 125 (couleur à 72 °C et 85 °C) |
+| Ventilateurs | `Fan` | tr/min | 0 – 10 000 |
+| Consommation | `Power` | W | 0 – 2 000 |
+
+- Un capteur n'apparaît qu'après une **vraie mesure** (> 0) : les entrées non branchées
+  (0 tr/min permanent, -55 °C, 127 °C…) ne polluent pas la liste.
+- `Distance to TjMax` est écarté : c'est un écart avant la limite thermique, pas une température.
+- Une section vide affiche « Aucun capteur détecté sur ce PC ». Exemple : sur un HP ProDesk
+  400 G4 (carte mère HP 82A2), la vitesse des ventilateurs est gérée par le contrôleur HP et
+  n'est pas lisible ; la consommation remonte `CPU Package`, `CPU Cores`, `CPU Memory` et
+  `GPU Power`.
+
 Points d'attention :
 
-- **Les sondes ACPI de la carte mère sont ignorées.** Sur beaucoup de PC fixes elles
-  renvoient une valeur aberrante (16,9 °C sur la machine de référence) qui ne reflète pas
-  le die du processeur.
+- **Les sondes ACPI de la carte mère ne pilotent pas la carte CPU.** Sur beaucoup de PC
+  fixes elles renvoient une valeur aberrante (16,9 °C sur la machine de référence) qui ne
+  reflète pas le die du processeur ; elles restent visibles dans le panneau CAPTEURS.
 - **LibreHardwareMonitor expose plusieurs composants `Memory`** : « Total Memory » (la RAM
   physique), « Virtual Memory » (le fichier d'échange, écarté) et une entrée par barrette
   pour la température. Le code ne retient que la RAM physique pour l'occupation.
@@ -131,14 +177,34 @@ c'est du bufferbloat sur la box, pas un défaut de mesure, et AETHER le rapporte
 
 Chaque module de l'onglet **Optimization** exécute une action système réelle
 (`Services/Optimization/`). Avant toute modification, l'état précédent est écrit dans
-`%AppData%\Aether\restore.json` : le bouton **RESTAURER** revient en arrière, y compris
-après un redémarrage d'AETHER. Chaque module affiche ce qu'il a réellement fait — ou
-pourquoi il n'a rien pu faire.
+`%AppData%\Aether\restore.json`, y compris après un redémarrage d'AETHER. Chaque module
+affiche ce qu'il a réellement fait — ou pourquoi il n'a rien pu faire.
+
+### Utilisation : 1 carte = 1 bouton
+
+Il n'y a pas de sélection ni de bouton global : le bouton de la carte agit immédiatement
+sur ce seul module.
+
+| Bouton | Quand | Effet |
+|---|---|---|
+| ⚡ Activer | module inactif | applique l'optimisation |
+| ⏻ Désactiver | module réversible appliqué | restaure l'état sauvegardé |
+| ↻ Relancer | action **PONCTUELLE** déjà exécutée | l'exécute à nouveau |
+| ⏳ En cours… | pendant l'exécution | — |
+
+- État affiché sur la carte : INACTIF · EN COURS… · **ACTIVÉ** (vert) · DÉSACTIVÉ ·
+  SANS EFFET · ÉCHEC (rouge).
+- Badges : **ADMIN** (droits administrateur requis) · **PONCTUEL** (Cleanup, Storage,
+  Memory, Overlay : rien à désactiver).
+- Une seule exécution à la fois (les actions partagent le magasin de restauration) : les
+  autres boutons sont grisés pendant ce temps.
+- **↩ TOUT DÉSACTIVER** annule d'un coup tous les modules appliqués ; **✕ ANNULER**
+  interrompt l'exécution en cours.
 
 | Module | Action réelle | Admin | Réversible |
 |---|---|:--:|:--:|
 | Gaming Boost | Plan d'alimentation « Performances élevées » + mode Jeu | — | ✅ |
-| Cleanup Engine | Supprime `%TEMP%`, dumps, cache IE (+ `Windows\Temp`) — épargne les fichiers de moins de 24 h | partiel | ❌ |
+| Cleanup Engine | Supprime `%TEMP%`, dumps, cache IE (+ `Windows\Temp`) — y compris ceux de l'utilisateur connecté si AETHER est élevé sous un autre compte ; épargne les fichiers de moins de 24 h, ne suit pas les jonctions | partiel | ❌ |
 | Startup Manager | Désactive les programmes tiers au démarrage (`StartupApproved`) | — | ✅ |
 | Network Accelerator | Vide le cache DNS + auto-tuning TCP sur `normal` | partiel | ✅ |
 | Storage Optimizer | `defrag /O` — TRIM sur SSD, défragmentation sur HDD | ✅ | n/a |
