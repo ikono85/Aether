@@ -36,6 +36,9 @@ public class NetworkService
     /// <summary>Nom de l'interface réellement utilisée, vide tant qu'elle n'est pas trouvée.</summary>
     public string InterfaceName { get; private set; } = "";
 
+    /// <summary>GUID de l'interface active : clé de sa configuration TCP/IP dans le registre.</summary>
+    public string InterfaceId { get; private set; } = "";
+
     /// <summary>Débit théorique du lien en Mb/s (NaN si l'interface ne le déclare pas).</summary>
     public double LinkSpeedMbps { get; private set; } = double.NaN;
 
@@ -98,6 +101,7 @@ public class NetworkService
 
             _iface = ni;
             InterfaceName = ni.Name;
+            InterfaceId = ni.Id;
             LinkSpeedMbps = ni.Speed > 0 ? ni.Speed / 1_000_000.0 : double.NaN;
             Gateway.Host = gw.Address.ToString();
             var dns = p.DnsAddresses.FirstOrDefault(d => d.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);

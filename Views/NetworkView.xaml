@@ -113,8 +113,10 @@
                         Command="{Binding SelectSectionCommand}" CommandParameter="Map" />
                 <Button Content="CONNEXIONS ACTIVES" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
                         Command="{Binding SelectSectionCommand}" CommandParameter="Connections" />
-                <Button Content="CHEMIN RÉSEAU" Style="{StaticResource PrimaryButton}"
+                <Button Content="CHEMIN RÉSEAU" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
                         Command="{Binding SelectSectionCommand}" CommandParameter="Route" />
+                <Button Content="BOÎTE À OUTILS" Style="{StaticResource PrimaryButton}"
+                        Command="{Binding SelectSectionCommand}" CommandParameter="Tools" />
             </StackPanel>
 
             <!-- ================================================= CARTOGRAPHIE -->
@@ -379,6 +381,101 @@
                     </ScrollViewer>
                 </Grid>
             </Border>
+
+            <!-- ================================================= BOÎTE À OUTILS -->
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Margin="12,12,0,10"
+                          Visibility="{Binding ShowTools, Converter={StaticResource BoolToVis}}">
+                <StackPanel>
+                    <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
+                        <StackPanel Margin="22,18">
+                            <TextBlock Text="ACTIONS RAPIDES" Style="{StaticResource LabelText}" Margin="0,0,0,12" />
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="200" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Button Content="Vider le cache DNS" Style="{StaticResource PrimaryButton}"
+                                        HorizontalAlignment="Left" Command="{Binding FlushDnsCommand}"
+                                        IsEnabled="{Binding IsToolBusy, Converter={StaticResource InverseBool}}" />
+                                <TextBlock Grid.Column="1" Style="{StaticResource Cell}" TextWrapping="Wrap"
+                                           Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource UiFont}"
+                                           Text="Un site a changé d'adresse ou ne s'ouvre plus alors qu'il fonctionne ailleurs. Sans risque, sans coupure." />
+
+                                <Button Grid.Row="1" Content="Renouveler le bail DHCP" Style="{StaticResource PrimaryButton}"
+                                        HorizontalAlignment="Left" Margin="0,12,0,0" Command="{Binding RenewDhcpCommand}"
+                                        IsEnabled="{Binding IsToolBusy, Converter={StaticResource InverseBool}}" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource Cell}" TextWrapping="Wrap" Margin="0,12,0,0"
+                                           Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource UiFont}"
+                                           Text="IP en 169.254.x.x, « aucun accès Internet » après une mise en veille. Brève coupure possible." />
+
+                                <Button Grid.Row="2" Content="Réinitialiser Winsock" Style="{StaticResource PrimaryButton}"
+                                        HorizontalAlignment="Left" Margin="0,12,0,0" Command="{Binding ResetWinsockCommand}"
+                                        IsEnabled="{Binding IsToolBusy, Converter={StaticResource InverseBool}}" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource Cell}" TextWrapping="Wrap" Margin="0,12,0,0"
+                                           Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource UiFont}"
+                                           Text="Connexion cassée après un VPN ou un antivirus désinstallé. Dernier recours : redémarrage requis." />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource GlassPanel}">
+                        <StackPanel Margin="22,18">
+                            <TextBlock Text="COMPARATEUR DNS" Style="{StaticResource LabelText}" />
+                            <TextBlock Margin="0,6,0,12" TextWrapping="Wrap" FontFamily="{StaticResource UiFont}" FontSize="11.5"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       Text="Chaque serveur reçoit 5 vraies requêtes DNS, adressées directement à lui : on compare la médiane. Un DNS plus rapide accélère l'ouverture de chaque nouveau site, pas les téléchargements." />
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="Comparer les DNS" Style="{StaticResource PrimaryButton}"
+                                        Command="{Binding BenchmarkDnsCommand}"
+                                        IsEnabled="{Binding IsToolBusy, Converter={StaticResource InverseBool}}" />
+                                <Button Content="Appliquer la sélection" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0"
+                                        Command="{Binding ApplyDnsCommand}"
+                                        IsEnabled="{Binding IsToolBusy, Converter={StaticResource InverseBool}}" />
+                                <Button Content="Rétablir le DNS d'origine" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0"
+                                        Command="{Binding RevertDnsCommand}"
+                                        Visibility="{Binding HasDnsBackup, Converter={StaticResource BoolToVis}}"
+                                        IsEnabled="{Binding IsToolBusy, Converter={StaticResource InverseBool}}" />
+                            </StackPanel>
+
+                            <ListBox Style="{StaticResource PlainList}" Margin="0,12,0,0"
+                                     ItemsSource="{Binding DnsResults}" SelectedItem="{Binding SelectedDns}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="130" />
+                                                <ColumnDefinition Width="160" />
+                                                <ColumnDefinition Width="110" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource Cell}" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Primary}" Style="{StaticResource Cell}"
+                                                       Foreground="{StaticResource TextMutedBrush}" />
+                                            <TextBlock Grid.Column="2" Text="{Binding LatencyText}" Style="{StaticResource Cell}"
+                                                       Foreground="{DynamicResource AccentBrush}" />
+                                            <TextBlock Grid.Column="3" Text="configuré actuellement" Style="{StaticResource Cell}"
+                                                       Foreground="{StaticResource TextMutedBrush}"
+                                                       Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVis}}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="{Binding ToolStatus}" Margin="4,12,0,0" TextWrapping="Wrap"
+                               FontFamily="{StaticResource MonoFont}" FontSize="11.5"
+                               Foreground="{DynamicResource AccentBrush}" />
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
 
         <!-- ================================================= COLONNE DROITE -->

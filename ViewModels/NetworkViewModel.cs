@@ -74,6 +74,7 @@ public partial class NetworkViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowMap));
         OnPropertyChanged(nameof(ShowConnections));
         OnPropertyChanged(nameof(ShowRoute));
+        OnPropertyChanged(nameof(ShowTools));
 
         // La table TCP n'est relue que lorsqu'elle est visible : inutile d'énumérer les
         // processus toutes les 3 s pendant que l'utilisateur regarde la cartographie.
@@ -84,6 +85,115 @@ public partial class NetworkViewModel : ObservableObject
     public bool ShowMap => Section == "Map";
     public bool ShowConnections => Section == "Connections";
     public bool ShowRoute => Section == "Route";
+    public bool ShowTools => Section == "Tools";
+
+    // ------------------------------------------------------------------ Boîte à outils
+
+    [ObservableProperty] private string _toolStatus = "";
+
+    /// <summary>Une seule action système à la fois : elles partagent l'interface active.</summary>
+    [ObservableProperty] private bool _isToolBusy;
+
+    public System.Collections.ObjectModel.ObservableCollection<DnsCandidate> DnsResults { get; } = new();
+
+    [ObservableProperty] private DnsCandidate? _selectedDns;
+
+    public bool HasDnsBackup => NetworkToolbox.HasDnsBackup();
+
+    private static bool Ask(string title, string message) =>
+        MessageBox.Show(message, $"AETHER — {title}", MessageBoxButton.OKCancel, MessageBoxImage.Warning)
+        == MessageBoxResult.OK;
+
+    /// <summary>Encadre une action : verrou, statut, puis relecture de la topologie si elle a pu changer.</summary>
+    private async Task RunTool(Func<Task<string>> action, bool rediscover)
+    {
+        if (IsToolBusy) return;
+        IsToolBusy = true;
+        ToolStatus = "En cours…";
+        try
+        {
+            ToolStatus = await action();
+            if (rediscover) await _net.RediscoverAsync();
+        }
+        catch (Exception ex) { ToolStatus = $"Erreur : {ex.Message}"; }
+        finally
+        {
+            IsToolBusy = false;
+            OnPropertyChanged(nameof(HasDnsBackup));
+        }
+    }
+
+    [RelayCommand]
+    private Task FlushDns() => RunTool(NetworkToolbox.FlushDnsAsync, rediscover: false);
+
+    [RelayCommand]
+    private Task RenewDhcp()
+    {
+        if (!Ask("renouveler le bail DHCP",
+                "La box va réattribuer une configuration IP à cette interface. La connexion peut " +
+                "décrocher quelques secondes, et l'adresse IP locale peut changer. Continuer ?"))
+            return Task.CompletedTask;
+
+        return RunTool(() => NetworkToolbox.RenewDhcpAsync(_net.InterfaceName), rediscover: true);
+    }
+
+    [RelayCommand]
+    private Task ResetWinsock()
+    {
+        if (!Ask("réinitialiser Winsock",
+                "Remet le catalogue Winsock à son état d'origine. Corrige une connexion cassée par " +
+                "un VPN, un antivirus ou un logiciel désinstallé, mais retire aussi les composants " +
+                "réseau qu'ils avaient ajoutés. Un redémarrage est nécessaire. Continuer ?"))
+            return Task.CompletedTask;
+
+        return RunTool(NetworkToolbox.ResetWinsockAsync, rediscover: false);
+    }
+
+    [RelayCommand]
+    private async Task BenchmarkDns()
+    {
+        if (IsToolBusy) return;
+        IsToolBusy = true;
+        ToolStatus = "Comparaison des serveurs DNS…";
+        try
+        {
+            var results = await NetworkToolbox.BenchmarkAsync(
+                NetworkToolbox.Candidates(_net.Dns.Host), CancellationToken.None);
+
+            DnsResults.Clear();
+            foreach (var r in results.OrderBy(r => double.IsNaN(r.LatencyMs) ? double.MaxValue : r.LatencyMs))
+                DnsResults.Add(r);
+
+            var best = DnsResults.FirstOrDefault(r => !double.IsNaN(r.LatencyMs));
+            var current = DnsResults.FirstOrDefault(r => r.IsCurrent);
+            SelectedDns = best;
+
+            ToolStatus = best is null ? "Aucun serveur DNS n'a répondu (port 53 filtré ?)."
+                : best.IsCurrent ? $"Le DNS actuel est déjà le plus rapide ({best.LatencyText})."
+                : current is null || double.IsNaN(current.LatencyMs)
+                    ? $"{best.Name} est le plus rapide ({best.LatencyText})."
+                    : $"{best.Name} répond en {best.LatencyText} contre {current.LatencyText} pour le DNS actuel.";
+        }
+        catch (Exception ex) { ToolStatus = $"Erreur : {ex.Message}"; }
+        finally { IsToolBusy = false; }
+    }
+
+    [RelayCommand]
+    private Task ApplyDns()
+    {
+        if (SelectedDns is not { } target) { ToolStatus = "Sélectionnez un serveur DNS dans la liste."; return Task.CompletedTask; }
+
+        if (!Ask("changer de DNS",
+                $"Configurer {target.Name} ({target.Primary}) sur « {_net.InterfaceName} » ?{Environment.NewLine}{Environment.NewLine}" +
+                "Le DNS d'origine est sauvegardé et reste rétablissable avec « Rétablir le DNS d'origine », " +
+                "même après un redémarrage."))
+            return Task.CompletedTask;
+
+        return RunTool(() => NetworkToolbox.ApplyDnsAsync(_net.InterfaceName, _net.InterfaceId, target), rediscover: true);
+    }
+
+    [RelayCommand]
+    private Task RevertDns() => RunTool(NetworkToolbox.RevertDnsAsync, rediscover: true);
 
     [RelayCommand]
     private void SelectSection(string section) => Section = section;
