@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -145,12 +145,35 @@ public partial class OptimizationViewModel : ObservableObject
         await Execute(applied, revert: true);
     }
 
+    /// <summary>
+    /// Garde-fou optionnel (réglage « Confirmer les optimisations à risque »). Ne concerne
+    /// que les actions système persistantes : une action ponctuelle (nettoyage, TRIM) ne
+    /// modifie rien de durable et n'a rien à confirmer.
+    /// </summary>
+    private static bool Confirm(List<OptimizationModule> targets)
+    {
+        if (!Aether.Services.AppSettings.Load().ConfirmRiskyActions) return true;
+
+        var risky = targets.Where(m => m.RequiresAdmin && !m.IsOneShot).ToList();
+        if (risky.Count == 0) return true;
+
+        var names = string.Join(Environment.NewLine + "• ", risky.Select(m => m.Title));
+        var nl = Environment.NewLine;
+        return MessageBox.Show(
+            $"Ces modules modifient durablement la configuration Windows :{nl}{nl}• {names}{nl}{nl}" +
+            "L'état précédent est enregistré dans restore.json et reste annulable. Continuer ?",
+            "AETHER — confirmation", MessageBoxButton.OKCancel, MessageBoxImage.Warning)
+            == MessageBoxResult.OK;
+    }
+
     // Une seule exécution à la fois : les actions partagent le même magasin de restauration.
     private bool CanRun() => !IsRunning;
     private bool CanRevert() => !IsRunning && Modules.Any(m => m.IsApplied);
 
     private async Task Execute(List<OptimizationModule> targets, bool revert)
     {
+        if (!revert && !Confirm(targets)) return;
+
         IsRunning = true;
         Progress = 0;
         ToggleCommand.NotifyCanExecuteChanged();

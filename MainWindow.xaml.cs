@@ -6,11 +6,35 @@ namespace Aether;
 
 public partial class MainWindow : Window
 {
-    public MainWindow() => InitializeComponent();
+    public MainWindow()
+    {
+        InitializeComponent();
+        Loaded += OnLoaded;
+        StateChanged += OnWindowStateChanged;
+    }
+
+    private MainViewModel? Vm => DataContext as MainViewModel;
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (Vm?.Settings.StartMinimized == true) WindowState = WindowState.Minimized;
+    }
+
+    /// <summary>
+    /// Fenêtre réduite : rien n'est visible, donc rien n'a besoin d'être échantillonné.
+    /// Suspendre les sondes rend au système le CPU que coûte la lecture des capteurs LHM.
+    /// </summary>
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+    {
+        if (Vm is not { } vm || !vm.Settings.PauseWhenMinimized) return;
+
+        if (WindowState == WindowState.Minimized) vm.Hw.Stop();
+        else vm.Hw.Resume();
+    }
 
     protected override void OnClosed(EventArgs e)
     {
-        (DataContext as MainViewModel)?.Shutdown();
+        Vm?.Shutdown();
         base.OnClosed(e);
     }
 

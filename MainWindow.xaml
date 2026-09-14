@@ -1,4 +1,4 @@
-<Window x:Class="Aether.MainWindow"
+﻿<Window x:Class="Aether.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:Aether.ViewModels"
@@ -33,6 +33,10 @@
 
     <!-- Cadre extérieur : carbone profond + halo -->
     <Border CornerRadius="16" BorderThickness="1" BorderBrush="{StaticResource GlassStrokeBrush}">
+        <!-- Échelle de l'interface, réglable dans Paramètres (la fenêtre, elle, ne bouge pas). -->
+        <Border.LayoutTransform>
+            <ScaleTransform ScaleX="{Binding Settings.Scale}" ScaleY="{Binding Settings.Scale}" />
+        </Border.LayoutTransform>
         <Border.Background>
             <RadialGradientBrush GradientOrigin="0.15,0.1" Center="0.15,0.1" RadiusX="1.1" RadiusY="1.1">
                 <GradientStop Color="#FF0B0E15" Offset="0" />

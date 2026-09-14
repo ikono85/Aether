@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -35,7 +35,8 @@ public partial class MainViewModel : ObservableObject
         Optimization = new OptimizationViewModel();
         WindowsServices = new WindowsServicesOptimizationViewModel();
         Performance = new PerformanceViewModel(Hw);
-        Settings = new SettingsViewModel();
+        Settings = new SettingsViewModel(Hw);
+        Settings.AccentPolicyChanged += OnAccentPolicyChanged;
 
         _current = Dashboard;
         Hw.Updated += OnTelemetry;
@@ -61,11 +62,23 @@ public partial class MainViewModel : ObservableObject
     private void OnTelemetry() => Recompute();
 
     /// <summary>
+    /// Un réglage d'accent ou de seuil thermique a changé : le score est recalculé avec la
+    /// nouvelle valeur, puis l'accent est réappliqué de force (l'état peut être identique
+    /// alors que la couleur à afficher, elle, a changé).
+    /// </summary>
+    private void OnAccentPolicyChanged()
+    {
+        Recompute();
+        ApplyAccent(State);
+    }
+
+    /// <summary>
     /// Arrête les sondes et décharge le pilote noyau de LibreHardwareMonitor.
     /// Appelé à la fermeture de la fenêtre : sans cela, le pilote resterait chargé.
     /// </summary>
     public void Shutdown()
     {
+        Settings.AccentPolicyChanged -= OnAccentPolicyChanged;
         Hw.Updated -= OnTelemetry;
         Hw.Dispose();
         NetSvc.Stop();
@@ -77,7 +90,8 @@ public partial class MainViewModel : ObservableObject
         // Les capteurs absents sont écartés du calcul : leur poids est redistribué sur les
         // mesures réellement disponibles, plutôt que compté comme un score nul.
         var hottest = Best(Hw.Cpu.Temperature, Hw.Gpu.Temperature);
-        double? thermal = hottest is null ? null : 100 - Math.Max(0, hottest.Value - 60) * 2.2;
+        int comfort = Settings.ThermalComfortC;
+        double? thermal = hottest is null ? null : 100 - Math.Max(0, hottest.Value - comfort) * 2.2;
 
         double? load = WeightedLoad();
 
@@ -133,7 +147,17 @@ public partial class MainViewModel : ObservableObject
     private void SetState(SystemState s)
     {
         if (State != s) State = s;
-        // Diffuse l'accent dynamique à toutes les ressources qui pointent "AccentBrush".
+        ApplyAccent(s);
+    }
+
+    /// <summary>
+    /// Diffuse l'accent à toutes les ressources qui pointent « AccentBrush ». Si l'accent
+    /// dynamique est désactivé dans les réglages, la teinte reste verte quel que soit l'état.
+    /// </summary>
+    private void ApplyAccent(SystemState s)
+    {
+        if (!Settings.DynamicAccent) s = SystemState.Optimal;
+
         var key = s switch
         {
             SystemState.Critical => "AccentDangerColor",

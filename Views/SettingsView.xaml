@@ -6,8 +6,37 @@
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
             <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
             <Setter Property="FontSize" Value="14" />
-            <Setter Property="Margin" Value="0,10" />
+            <Setter Property="Margin" Value="0,9" />
             <Setter Property="Cursor" Value="Hand" />
+        </Style>
+
+        <!-- Ligne d'explication sous un réglage : dit ce que la case change réellement. -->
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="24,-6,0,4" />
+        </Style>
+
+        <Style x:Key="Value" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+        </Style>
+
+        <Style x:Key="Divider" TargetType="Border">
+            <Setter Property="Height" Value="1" />
+            <Setter Property="Background" Value="#18FFFFFF" />
+            <Setter Property="Margin" Value="0,16" />
+        </Style>
+
+        <Style x:Key="Knob" TargetType="Slider">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="IsSnapToTickEnabled" Value="True" />
+            <Setter Property="Width" Value="280" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
         </Style>
     </UserControl.Resources>
 
@@ -22,31 +51,123 @@
             <TextBlock Text="Paramètres du cockpit" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
         </StackPanel>
 
-        <Border Grid.Row="1" Style="{StaticResource GlassPanel}" Margin="12,16,0,4"
-                VerticalAlignment="Top" HorizontalAlignment="Left" Width="480">
-            <StackPanel Margin="28,24">
-                <TextBlock Text="GÉNÉRAL" Style="{StaticResource LabelText}" Margin="0,0,0,8" />
-                <CheckBox Content="Lancer AETHER au démarrage de Windows" IsChecked="{Binding LaunchAtStartup}" />
-                <CheckBox Content="Télémétrie temps réel" IsChecked="{Binding LiveTelemetry}" />
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,14,0,0">
+            <Grid Margin="12,0,12,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
 
-                <Border Height="1" Background="#18FFFFFF" Margin="0,16" />
-                <TextBlock Text="APPARENCE" Style="{StaticResource LabelText}" Margin="0,0,0,8" />
-                <CheckBox Content="Effets de particules et halos" IsChecked="{Binding ParticleEffects}" />
-                <CheckBox Content="Analyses IA (accent violet dynamique)" IsChecked="{Binding AiInsights}" />
+                <!-- ============================ Colonne gauche ============================ -->
+                <Border Style="{StaticResource GlassPanel}" Width="470" VerticalAlignment="Top">
+                    <StackPanel Margin="28,24">
 
-                <Border Height="1" Background="#18FFFFFF" Margin="0,16" />
-                <TextBlock Text="INTERVALLE DE RAFRAÎCHISSEMENT" Style="{StaticResource LabelText}" Margin="0,0,0,10" />
-                <Slider Minimum="1" Maximum="5" Value="{Binding RefreshRate}" TickFrequency="1"
-                        IsSnapToTickEnabled="True" Foreground="{DynamicResource AccentBrush}" Width="260"
-                        HorizontalAlignment="Left" />
-                <TextBlock Text="{Binding RefreshRate, StringFormat=Toutes les {0} s}"
-                           Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource MonoFont}"
-                           FontSize="12" Margin="0,6,0,0" />
+                        <TextBlock Text="DÉMARRAGE" Style="{StaticResource LabelText}" Margin="0,0,0,8" />
 
-                <Border Height="1" Background="#18FFFFFF" Margin="0,20" />
-                <TextBlock Text="{Binding Version}" Foreground="{StaticResource TextMutedBrush}"
-                           FontFamily="{StaticResource MonoFont}" FontSize="11" />
-            </StackPanel>
-        </Border>
+                        <CheckBox Content="Lancer AETHER à l'ouverture de session"
+                                  IsChecked="{Binding LaunchAtStartup}"
+                                  IsEnabled="{Binding IsElevated}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Crée une tâche planifiée « AetherAutoStart » exécutée avec les droits les plus élevés : pas d'invite UAC au démarrage. Nécessite une session administrateur." />
+
+                        <CheckBox Content="Démarrer en fenêtre réduite" IsChecked="{Binding StartMinimized}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Utile avec le lancement automatique : la surveillance tourne sans occuper l'écran." />
+
+                        <TextBlock Text="{Binding StartupStatus}" Style="{StaticResource Value}"
+                                   TextWrapping="Wrap" Width="390" HorizontalAlignment="Left" />
+
+                        <Border Style="{StaticResource Divider}" />
+
+                        <TextBlock Text="CAPTEURS" Style="{StaticResource LabelText}" Margin="0,0,0,10" />
+                        <Slider Style="{StaticResource Knob}" Minimum="250" Maximum="5000"
+                                TickFrequency="250" Value="{Binding SampleIntervalMs}" />
+                        <TextBlock Text="{Binding IntervalLabel}" Style="{StaticResource Value}" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,4"
+                                   Text="Période d'interrogation de LibreHardwareMonitor. Plus court = courbes plus fines, mais lecture des capteurs plus fréquente donc un peu plus de CPU." />
+
+                        <CheckBox Content="Suspendre les sondes quand la fenêtre est réduite"
+                                  IsChecked="{Binding PauseWhenMinimized}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Rien n'est affiché quand la fenêtre est réduite : le timer s'arrête et reprend à la restauration." />
+
+                        <Border Style="{StaticResource Divider}" />
+
+                        <TextBlock Text="SEUILS" Style="{StaticResource LabelText}" Margin="0,0,0,10" />
+                        <Slider Style="{StaticResource Knob}" Minimum="45" Maximum="85"
+                                TickFrequency="5" Value="{Binding ThermalComfortC}" />
+                        <TextBlock Text="{Binding ThermalComfortC, StringFormat=Température de confort : {0} °C}"
+                                   Style="{StaticResource Value}" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,4"
+                                   Text="Au-delà de ce seuil, le score de santé se dégrade et l'état bascule en CHARGE ÉLEVÉE puis PROBLÈME DÉTECTÉ. Montez-le sur un portable, descendez-le sur un watercooling." />
+
+                        <CheckBox Content="Confirmer les optimisations à risque"
+                                  IsChecked="{Binding ConfirmRiskyActions}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Demande une validation avant toute action système sans point de restauration enregistré." />
+                    </StackPanel>
+                </Border>
+
+                <!-- ============================ Colonne droite ============================ -->
+                <Border Grid.Column="1" Style="{StaticResource GlassPanel}" Width="470"
+                        Margin="16,0,0,0" VerticalAlignment="Top">
+                    <StackPanel Margin="28,24">
+
+                        <TextBlock Text="APPARENCE" Style="{StaticResource LabelText}" Margin="0,0,0,8" />
+
+                        <CheckBox Content="Effets visuels (halos et ombres portées)"
+                                  IsChecked="{Binding VisualEffects}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Désactive le flou des panneaux de verre sur toute l'interface. À couper sur un GPU intégré : c'est le poste de rendu le plus coûteux." />
+
+                        <CheckBox Content="Accent coloré suivant l'état système"
+                                  IsChecked="{Binding DynamicAccent}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Vert, orange ou rouge selon le score de santé. Décoché, l'interface reste verte en permanence." />
+
+                        <TextBlock Text="ÉCHELLE DE L'INTERFACE" Style="{StaticResource LabelText}" Margin="0,10,0,10" />
+                        <Slider Style="{StaticResource Knob}" Minimum="80" Maximum="150"
+                                TickFrequency="5" Value="{Binding UiScale}" />
+                        <TextBlock Text="{Binding ScaleLabel}" Style="{StaticResource Value}" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,4"
+                                   Text="Agrandit le contenu sans changer la taille de la fenêtre. Appliqué immédiatement." />
+
+                        <Border Style="{StaticResource Divider}" />
+
+                        <TextBlock Text="DIAGNOSTIC" Style="{StaticResource LabelText}" Margin="0,0,0,10" />
+                        <TextBlock Text="{Binding ElevationStatus}" TextWrapping="Wrap" Width="390"
+                                   HorizontalAlignment="Left" FontFamily="{StaticResource UiFont}"
+                                   FontSize="12.5" Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="{Binding SensorStatus}" TextWrapping="Wrap" Width="390"
+                                   HorizontalAlignment="Left" Margin="0,8,0,0"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11.5"
+                                   Foreground="{StaticResource TextMutedBrush}" />
+                        <Button Content="Relire l'état des capteurs" Style="{StaticResource PrimaryButton}"
+                                Command="{Binding RefreshDiagnosticsCommand}"
+                                HorizontalAlignment="Left" Margin="0,12,0,0" />
+
+                        <Border Style="{StaticResource Divider}" />
+
+                        <TextBlock Text="DONNÉES" Style="{StaticResource LabelText}" Margin="0,0,0,8" />
+                        <TextBlock Text="{Binding DataPath}" TextWrapping="Wrap" Width="390"
+                                   HorizontalAlignment="Left" FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11" Foreground="{StaticResource TextMutedBrush}" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,4"
+                                   Text="Ce dossier contient aussi restore.json (annulation des optimisations) et service-changes.json (journal des services Windows modifiés)." />
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button Content="Ouvrir le dossier" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding OpenDataFolderCommand}" />
+                            <Button Content="Réinitialiser les réglages" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding ResetSettingsCommand}" Margin="10,0,0,0" />
+                        </StackPanel>
+
+                        <Border Style="{StaticResource Divider}" />
+                        <TextBlock Text="{Binding Version}" Foreground="{StaticResource TextMutedBrush}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </ScrollViewer>
     </Grid>
 </UserControl>

@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows.Threading;
 using Aether.Models;
 using LibreHardwareMonitor.Hardware;
@@ -71,6 +71,27 @@ public class HardwareService : IDisposable
     }
 
     public void Stop() => _timer.Stop();
+
+    /// <summary>Vrai entre <see cref="Start"/> et <see cref="Stop"/> : le timer échantillonne.</summary>
+    public bool IsRunning => _timer.IsEnabled;
+
+    /// <summary>
+    /// Période d'échantillonnage. Réglable à chaud : le <see cref="DispatcherTimer"/>
+    /// reprend le nouvel intervalle sans devoir réinitialiser la couche capteurs.
+    /// </summary>
+    public TimeSpan Interval
+    {
+        get => _timer.Interval;
+        set => _timer.Interval = value < TimeSpan.FromMilliseconds(250)
+            ? TimeSpan.FromMilliseconds(250)
+            : value;
+    }
+
+    /// <summary>Reprend l'échantillonnage après une pause, si les capteurs sont initialisés.</summary>
+    public void Resume()
+    {
+        if (SensorsAvailable && !_timer.IsEnabled) _timer.Start();
+    }
 
     private bool Initialize()
     {
