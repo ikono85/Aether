@@ -135,6 +135,35 @@
 
                         <Border Style="{StaticResource Divider}" />
 
+                        <TextBlock Text="ZONE DE NOTIFICATION ET ALERTES" Style="{StaticResource LabelText}" Margin="0,0,0,8" />
+
+                        <CheckBox Content="Fermer dans la zone de notification" IsChecked="{Binding CloseToTray}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Le bouton fermer masque la fenêtre : la surveillance continue. « Quitter » dans le menu de l'icône arrête vraiment AETHER." />
+
+                        <CheckBox Content="Alertes activées" IsChecked="{Binding AlertsEnabled}" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Interrupteur général, aussi disponible par clic droit sur l'icône." />
+
+                        <CheckBox Content="Température CPU / GPU" IsChecked="{Binding AlertTemperature}"
+                                  IsEnabled="{Binding AlertsEnabled}" Margin="24,6,0,4" />
+                        <Slider Style="{StaticResource Knob}" Minimum="60" Maximum="100" TickFrequency="5"
+                                Value="{Binding AlertTempC}" Margin="24,0,0,0" Width="256"
+                                IsEnabled="{Binding AlertTemperature}" />
+                        <TextBlock Text="{Binding AlertTempC, StringFormat=Alerte au-delà de {0} °C}"
+                                   Style="{StaticResource Value}" Margin="24,6,0,0" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="24,4,0,4"
+                                   Text="Distinct de la température de confort, qui ne règle que le score de santé. Réarmée après un retour 5 °C sous le seuil. Garde les sondes actives même fenêtre réduite." />
+
+                        <CheckBox Content="Coupure et rétablissement de la connexion" IsChecked="{Binding AlertConnection}"
+                                  IsEnabled="{Binding AlertsEnabled}" Margin="24,6,0,4" />
+                        <CheckBox Content="Diagnostic réseau au rouge" IsChecked="{Binding AlertNetwork}"
+                                  IsEnabled="{Binding AlertsEnabled}" Margin="24,6,0,4" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="48,-2,0,4"
+                                   Text="Uniquement si le problème dure au moins 15 secondes, une fois par épisode." />
+
+                        <Border Style="{StaticResource Divider}" />
+
                         <TextBlock Text="DIAGNOSTIC" Style="{StaticResource LabelText}" Margin="0,0,0,10" />
                         <TextBlock Text="{Binding ElevationStatus}" TextWrapping="Wrap" Width="390"
                                    HorizontalAlignment="Left" FontFamily="{StaticResource UiFont}"

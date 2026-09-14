@@ -40,6 +40,12 @@ public partial class SettingsViewModel : ObservableObject
         _uiScale = _store.UiScale;
         _thermalComfortC = _store.ThermalComfortC;
         _confirmRiskyActions = _store.ConfirmRiskyActions;
+        _closeToTray = _store.CloseToTray;
+        _alertsEnabled = _store.AlertsEnabled;
+        _alertTemperature = _store.AlertTemperature;
+        _alertTempC = _store.AlertTempC;
+        _alertConnection = _store.AlertConnection;
+        _alertNetwork = _store.AlertNetwork;
         _loading = false;
 
         // Réapplique au démarrage ce que le fichier contenait.
@@ -184,6 +190,27 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnConfirmRiskyActionsChanged(bool value) { _store.ConfirmRiskyActions = value; Persist(); }
 
+    // ---------------------------------------------------------------- Zone de notification et alertes
+
+    [ObservableProperty] private bool _closeToTray;
+    partial void OnCloseToTrayChanged(bool value) { _store.CloseToTray = value; Persist(); }
+
+    [ObservableProperty] private bool _alertsEnabled;
+    partial void OnAlertsEnabledChanged(bool value) { _store.AlertsEnabled = value; Persist(); }
+
+    [ObservableProperty] private bool _alertTemperature;
+    partial void OnAlertTemperatureChanged(bool value) { _store.AlertTemperature = value; Persist(); }
+
+    /// <summary>Seuil d'alerte CPU/GPU en °C.</summary>
+    [ObservableProperty] private int _alertTempC;
+    partial void OnAlertTempCChanged(int value) { _store.AlertTempC = value; Persist(); }
+
+    [ObservableProperty] private bool _alertConnection;
+    partial void OnAlertConnectionChanged(bool value) { _store.AlertConnection = value; Persist(); }
+
+    [ObservableProperty] private bool _alertNetwork;
+    partial void OnAlertNetworkChanged(bool value) { _store.AlertNetwork = value; Persist(); }
+
     // ---------------------------------------------------------------- Données
 
     public string DataPath => AppSettings.FilePath;
@@ -210,6 +237,12 @@ public partial class SettingsViewModel : ObservableObject
         UiScale = d.UiScale;
         ThermalComfortC = d.ThermalComfortC;
         ConfirmRiskyActions = d.ConfirmRiskyActions;
+        CloseToTray = d.CloseToTray;
+        AlertsEnabled = d.AlertsEnabled;
+        AlertTemperature = d.AlertTemperature;
+        AlertTempC = d.AlertTempC;
+        AlertConnection = d.AlertConnection;
+        AlertNetwork = d.AlertNetwork;
         _loading = false;
 
         // Application effective des valeurs par défaut : les setters ont été court-circuités.

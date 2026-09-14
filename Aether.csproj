@@ -6,11 +6,23 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Uniquement pour NotifyIcon (zone de notification) : WPF n'en a pas d'équivalent. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- WFAC010 réclame le DPI via l'API WinForms : sans objet ici, la fenêtre est en WPF
+         et son DPI par moniteur est correctement déclaré dans app.manifest. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <AssemblyName>Aether</AssemblyName>
     <RootNamespace>Aether</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+
+  <!-- WinForms ajoute ces usings globaux : ils rendraient ambigus Application, MessageBox,
+       Color, Point… partout dans le code WPF. Les types WinForms restent qualifiés. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />

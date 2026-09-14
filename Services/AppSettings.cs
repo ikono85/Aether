@@ -32,6 +32,17 @@ public class AppSettings
     /// <summary>Température (°C) à partir de laquelle le score de santé se dégrade.</summary>
     public int ThermalComfortC { get; set; } = 60;
 
+    // --- Zone de notification et alertes ---
+    /// <summary>Le bouton fermer masque la fenêtre dans la zone de notification au lieu de quitter.</summary>
+    public bool CloseToTray { get; set; } = true;
+    /// <summary>Interrupteur général, aussi accessible depuis le menu de l'icône.</summary>
+    public bool AlertsEnabled { get; set; } = true;
+    public bool AlertTemperature { get; set; } = true;
+    /// <summary>Seuil d'alerte CPU/GPU (°C). Distinct du seuil de confort, qui ne sert qu'au score.</summary>
+    public int AlertTempC { get; set; } = 85;
+    public bool AlertConnection { get; set; } = true;
+    public bool AlertNetwork { get; set; } = true;
+
     // --- Sécurité ---
     /// <summary>Demande une confirmation avant toute optimisation irréversible sans point de restauration.</summary>
     public bool ConfirmRiskyActions { get; set; } = true;
