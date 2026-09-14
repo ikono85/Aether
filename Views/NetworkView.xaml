@@ -4,6 +4,8 @@
              xmlns:local="clr-namespace:Aether">
     <UserControl.Resources>
         <local:HealthToBrushConverter x:Key="HealthToBrush" />
+        <local:BoolToVisConverter x:Key="BoolToVis" />
+        <local:InverseBoolConverter x:Key="InverseBool" />
 
         <!-- Flux animé : couleur pilotée par la santé du maillon -->
         <Style x:Key="FlowLine" TargetType="Line">
@@ -39,152 +41,456 @@
             <Setter Property="Width" Value="180" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         </Style>
+
+        <!-- Cellule d'un tableau (connexions, traceroute) -->
+        <Style x:Key="Cell" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style x:Key="HeadCell" TargetType="TextBlock" BasedOn="{StaticResource LabelText}">
+            <Setter Property="FontSize" Value="10" />
+        </Style>
+
+        <!-- Lignes sélectionnables sans le bleu système par défaut -->
+        <Style x:Key="RowContainer" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bg" Background="Transparent" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#12FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#24FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PlainList" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource RowContainer}" />
+        </Style>
+
     </UserControl.Resources>
 
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="300" />
+            <ColumnDefinition Width="320" />
         </Grid.ColumnDefinitions>
 
         <Grid Grid.Column="0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
+
             <StackPanel Margin="12,6,0,0">
                 <TextBlock Text="RÉSEAU NEURONAL · MESURES RÉELLES" Style="{StaticResource LabelText}" />
                 <TextBlock Text="Cartographie des connexions" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
+                <TextBlock Margin="0,4,0,0" FontFamily="{StaticResource MonoFont}" FontSize="11"
+                           Foreground="{StaticResource TextMutedBrush}">
+                    <Run Text="{Binding InterfaceName, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding LinkSpeedText, Mode=OneWay}" />
+                </TextBlock>
             </StackPanel>
 
-            <Viewbox Grid.Row="1" Stretch="Uniform" Margin="0,10,0,0">
-                <Canvas Width="600" Height="600">
-                    <!-- Flux (couleur = santé du maillon ciblé) -->
-                    <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="520" Y2="300"
-                          Stroke="{Binding Dns.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="410" Y2="490"
-                          Stroke="{Binding Cdn.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="190" Y2="490"
-                          Stroke="{Binding Gateway.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="80"  Y2="300"
-                          Stroke="{Binding Isp.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="190" Y2="110"
-                          Stroke="{Binding Peer.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="410" Y2="110"
-                          Stroke="{Binding Cloud.Health, Converter={StaticResource HealthToBrush}}" />
+            <!-- Sous-navigation : les trois lectures du même réseau -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="12,14,0,0">
+                <Button Content="CARTOGRAPHIE" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
+                        Command="{Binding SelectSectionCommand}" CommandParameter="Map" />
+                <Button Content="CONNEXIONS ACTIVES" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
+                        Command="{Binding SelectSectionCommand}" CommandParameter="Connections" />
+                <Button Content="CHEMIN RÉSEAU" Style="{StaticResource PrimaryButton}"
+                        Command="{Binding SelectSectionCommand}" CommandParameter="Route" />
+            </StackPanel>
 
-                    <!-- Nœuds distants -->
-                    <Ellipse Style="{StaticResource Node}" Canvas.Left="511" Canvas.Top="291"
-                             Stroke="{Binding Dns.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Ellipse Style="{StaticResource Node}" Canvas.Left="401" Canvas.Top="481"
-                             Stroke="{Binding Cdn.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Ellipse Style="{StaticResource Node}" Canvas.Left="181" Canvas.Top="481"
-                             Stroke="{Binding Gateway.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Ellipse Style="{StaticResource Node}" Canvas.Left="71"  Canvas.Top="291"
-                             Stroke="{Binding Isp.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Ellipse Style="{StaticResource Node}" Canvas.Left="181" Canvas.Top="101"
-                             Stroke="{Binding Peer.Health, Converter={StaticResource HealthToBrush}}" />
-                    <Ellipse Style="{StaticResource Node}" Canvas.Left="401" Canvas.Top="101"
-                             Stroke="{Binding Cloud.Health, Converter={StaticResource HealthToBrush}}" />
+            <!-- ================================================= CARTOGRAPHIE -->
+            <Grid Grid.Row="2" Visibility="{Binding ShowMap, Converter={StaticResource BoolToVis}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-                    <!-- DNS -->
-                    <StackPanel Canvas.Left="470" Canvas.Top="238">
-                        <TextBlock Text="DNS" Style="{StaticResource NodeLabel}" />
-                        <TextBlock Text="{Binding Dns.Host}" Style="{StaticResource HostLabel}" Width="150" />
-                        <TextBlock Text="{Binding Dns.RttText}" Style="{StaticResource HostLabel}" Width="150"
-                                   Foreground="{Binding Dns.Health, Converter={StaticResource HealthToBrush}}" />
+                <Viewbox Stretch="Uniform" Margin="0,10,0,0">
+                    <Canvas Width="600" Height="600">
+                        <!-- Flux (couleur = santé du maillon ciblé) -->
+                        <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="520" Y2="300"
+                              Stroke="{Binding Dns.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="410" Y2="490"
+                              Stroke="{Binding Cdn.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="190" Y2="490"
+                              Stroke="{Binding Gateway.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="80"  Y2="300"
+                              Stroke="{Binding Isp.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="190" Y2="110"
+                              Stroke="{Binding Peer.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Line Style="{StaticResource FlowLine}" X1="300" Y1="300" X2="410" Y2="110"
+                              Stroke="{Binding Cloud.Health, Converter={StaticResource HealthToBrush}}" />
+
+                        <!-- Nœuds distants -->
+                        <Ellipse Style="{StaticResource Node}" Canvas.Left="511" Canvas.Top="291"
+                                 Stroke="{Binding Dns.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Ellipse Style="{StaticResource Node}" Canvas.Left="401" Canvas.Top="481"
+                                 Stroke="{Binding Cdn.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Ellipse Style="{StaticResource Node}" Canvas.Left="181" Canvas.Top="481"
+                                 Stroke="{Binding Gateway.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Ellipse Style="{StaticResource Node}" Canvas.Left="71"  Canvas.Top="291"
+                                 Stroke="{Binding Isp.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Ellipse Style="{StaticResource Node}" Canvas.Left="181" Canvas.Top="101"
+                                 Stroke="{Binding Peer.Health, Converter={StaticResource HealthToBrush}}" />
+                        <Ellipse Style="{StaticResource Node}" Canvas.Left="401" Canvas.Top="101"
+                                 Stroke="{Binding Cloud.Health, Converter={StaticResource HealthToBrush}}" />
+
+                        <!-- DNS -->
+                        <StackPanel Canvas.Left="470" Canvas.Top="238">
+                            <TextBlock Text="DNS" Style="{StaticResource NodeLabel}" />
+                            <TextBlock Text="{Binding Dns.Host}" Style="{StaticResource HostLabel}" Width="150" />
+                            <TextBlock Text="{Binding Dns.RttText}" Style="{StaticResource HostLabel}" Width="150"
+                                       Foreground="{Binding Dns.Health, Converter={StaticResource HealthToBrush}}" />
+                        </StackPanel>
+                        <!-- CDN -->
+                        <StackPanel Canvas.Left="335" Canvas.Top="505">
+                            <TextBlock Text="CDN" Style="{StaticResource NodeLabel}" />
+                            <TextBlock Text="{Binding Cdn.Host}" Style="{StaticResource HostLabel}" Width="150" />
+                            <TextBlock Text="{Binding Cdn.RttText}" Style="{StaticResource HostLabel}" Width="150"
+                                       Foreground="{Binding Cdn.Health, Converter={StaticResource HealthToBrush}}" />
+                        </StackPanel>
+                        <!-- GATEWAY -->
+                        <StackPanel Canvas.Left="115" Canvas.Top="505">
+                            <TextBlock Text="GATEWAY" Style="{StaticResource NodeLabel}" />
+                            <TextBlock Text="{Binding Gateway.Host}" Style="{StaticResource HostLabel}" Width="150" />
+                            <TextBlock Text="{Binding Gateway.RttText}" Style="{StaticResource HostLabel}" Width="150"
+                                       Foreground="{Binding Gateway.Health, Converter={StaticResource HealthToBrush}}" />
+                        </StackPanel>
+                        <!-- ISP -->
+                        <StackPanel Canvas.Left="-45" Canvas.Top="238">
+                            <TextBlock Text="ISP" Style="{StaticResource NodeLabel}" />
+                            <TextBlock Text="{Binding Isp.Host}" Style="{StaticResource HostLabel}" />
+                            <TextBlock Text="{Binding Isp.RttText}" Style="{StaticResource HostLabel}"
+                                       Foreground="{Binding Isp.Health, Converter={StaticResource HealthToBrush}}" />
+                        </StackPanel>
+                        <!-- PEER -->
+                        <StackPanel Canvas.Left="106" Canvas.Top="42">
+                            <TextBlock Text="PEER" Style="{StaticResource NodeLabel}" />
+                            <TextBlock Text="{Binding Peer.Host}" Style="{StaticResource HostLabel}" />
+                            <TextBlock Text="{Binding Peer.RttText}" Style="{StaticResource HostLabel}"
+                                       Foreground="{Binding Peer.Health, Converter={StaticResource HealthToBrush}}" />
+                        </StackPanel>
+                        <!-- CLOUD -->
+                        <StackPanel Canvas.Left="335" Canvas.Top="42">
+                            <TextBlock Text="CLOUD" Style="{StaticResource NodeLabel}" />
+                            <TextBlock Text="{Binding Cloud.Host}" Style="{StaticResource HostLabel}" Width="150" />
+                            <TextBlock Text="{Binding Cloud.RttText}" Style="{StaticResource HostLabel}" Width="150"
+                                       Foreground="{Binding Cloud.Health, Converter={StaticResource HealthToBrush}}" />
+                        </StackPanel>
+
+                        <!-- PC central -->
+                        <Ellipse Canvas.Left="250" Canvas.Top="250" Width="100" Height="100"
+                                 Fill="#FF12161F" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2">
+                            <Ellipse.Effect>
+                                <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.8" Color="#9B6BFF" />
+                            </Ellipse.Effect>
+                        </Ellipse>
+                        <TextBlock Text="PC" Canvas.Left="283" Canvas.Top="282" FontFamily="{StaticResource MonoFont}"
+                                   FontSize="26" Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text="⇅ INTERNET" Canvas.Left="250" Canvas.Top="356" Style="{StaticResource LabelText}"
+                                   Width="100" TextAlignment="Center" />
+                    </Canvas>
+                </Viewbox>
+
+                <!-- Courbes de latence : 60 relevés par maillon, gigue calculée dessus -->
+                <Border Grid.Row="1" Style="{StaticResource GlassPanel}" Margin="12,10,0,10">
+                    <StackPanel Margin="18,14">
+                        <TextBlock Text="LATENCE ET GIGUE PAR MAILLON" Style="{StaticResource LabelText}" Margin="0,0,0,8" />
+                        <ItemsControl ItemsSource="{Binding Nodes}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="3" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,0,18,10">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Label}" Style="{StaticResource HeadCell}" Width="70" />
+                                            <TextBlock Text="{Binding RttText}" Style="{StaticResource Cell}" Width="70"
+                                                       Foreground="{Binding Health, Converter={StaticResource HealthToBrush}}" />
+                                            <TextBlock Style="{StaticResource Cell}" Foreground="{StaticResource TextMutedBrush}">
+                                                <Run Text="± " /><Run Text="{Binding JitterText, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <Polyline Points="{Binding SparklinePoints}" StrokeThickness="1.3"
+                                                  Width="150" Height="26" HorizontalAlignment="Left" Margin="0,3,0,0"
+                                                  Stroke="{Binding Health, Converter={StaticResource HealthToBrush}}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
-                    <!-- CDN -->
-                    <StackPanel Canvas.Left="335" Canvas.Top="505">
-                        <TextBlock Text="CDN" Style="{StaticResource NodeLabel}" />
-                        <TextBlock Text="{Binding Cdn.Host}" Style="{StaticResource HostLabel}" Width="150" />
-                        <TextBlock Text="{Binding Cdn.RttText}" Style="{StaticResource HostLabel}" Width="150"
-                                   Foreground="{Binding Cdn.Health, Converter={StaticResource HealthToBrush}}" />
-                    </StackPanel>
-                    <!-- GATEWAY -->
-                    <StackPanel Canvas.Left="115" Canvas.Top="505">
-                        <TextBlock Text="GATEWAY" Style="{StaticResource NodeLabel}" />
-                        <TextBlock Text="{Binding Gateway.Host}" Style="{StaticResource HostLabel}" Width="150" />
-                        <TextBlock Text="{Binding Gateway.RttText}" Style="{StaticResource HostLabel}" Width="150"
-                                   Foreground="{Binding Gateway.Health, Converter={StaticResource HealthToBrush}}" />
-                    </StackPanel>
-                    <!-- ISP -->
-                    <StackPanel Canvas.Left="-45" Canvas.Top="238">
-                        <TextBlock Text="ISP" Style="{StaticResource NodeLabel}" />
-                        <TextBlock Text="{Binding Isp.Host}" Style="{StaticResource HostLabel}" />
-                        <TextBlock Text="{Binding Isp.RttText}" Style="{StaticResource HostLabel}"
-                                   Foreground="{Binding Isp.Health, Converter={StaticResource HealthToBrush}}" />
-                    </StackPanel>
-                    <!-- PEER -->
-                    <StackPanel Canvas.Left="106" Canvas.Top="42">
-                        <TextBlock Text="PEER" Style="{StaticResource NodeLabel}" />
-                        <TextBlock Text="{Binding Peer.Host}" Style="{StaticResource HostLabel}" />
-                        <TextBlock Text="{Binding Peer.RttText}" Style="{StaticResource HostLabel}"
-                                   Foreground="{Binding Peer.Health, Converter={StaticResource HealthToBrush}}" />
-                    </StackPanel>
-                    <!-- CLOUD -->
-                    <StackPanel Canvas.Left="335" Canvas.Top="42">
-                        <TextBlock Text="CLOUD" Style="{StaticResource NodeLabel}" />
-                        <TextBlock Text="{Binding Cloud.Host}" Style="{StaticResource HostLabel}" Width="150" />
-                        <TextBlock Text="{Binding Cloud.RttText}" Style="{StaticResource HostLabel}" Width="150"
-                                   Foreground="{Binding Cloud.Health, Converter={StaticResource HealthToBrush}}" />
+                </Border>
+            </Grid>
+
+            <!-- ================================================= CONNEXIONS ACTIVES -->
+            <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Margin="12,12,0,10"
+                    Visibility="{Binding ShowConnections, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="18,16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <TextBox Text="{Binding ConnectionFilter, UpdateSourceTrigger=PropertyChanged}"
+                                 Width="240" Padding="8,5" FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                 Background="#14FFFFFF" BorderBrush="{StaticResource GlassStrokeBrush}"
+                                 Foreground="{StaticResource TextPrimaryBrush}" CaretBrush="{DynamicResource AccentBrush}"
+                                 ToolTip="Filtre sur le processus, l'hôte distant, l'état ou le PID" />
+                        <Button Content="Actualiser" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0"
+                                Command="{Binding RefreshConnectionsCommand}" />
+                        <Button Content="Terminer le processus" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0"
+                                Command="{Binding KillSelectedProcessCommand}" />
                     </StackPanel>
 
-                    <!-- PC central -->
-                    <Ellipse Canvas.Left="250" Canvas.Top="250" Width="100" Height="100"
-                             Fill="#FF12161F" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2">
-                        <Ellipse.Effect>
-                            <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.8" Color="#9B6BFF" />
-                        </Ellipse.Effect>
-                    </Ellipse>
-                    <TextBlock Text="PC" Canvas.Left="283" Canvas.Top="282" FontFamily="{StaticResource MonoFont}"
-                               FontSize="26" Foreground="{StaticResource TextPrimaryBrush}" />
-                    <TextBlock Text="⇅ INTERNET" Canvas.Left="250" Canvas.Top="356" Style="{StaticResource LabelText}"
-                               Width="100" TextAlignment="Center" />
-                </Canvas>
-            </Viewbox>
+                    <Grid Grid.Row="1" Margin="10,14,10,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="60" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="70" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="110" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="PROCESSUS" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="1" Text="PID" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="2" Text="HÔTE DISTANT" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="3" Text="PORT" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="4" Text="SERVICE" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="5" Text="ÉTAT" Style="{StaticResource HeadCell}" />
+                    </Grid>
+                    <Border Grid.Row="1" Height="1" Background="#18FFFFFF" VerticalAlignment="Bottom" />
+
+                    <ListBox Grid.Row="2" Style="{StaticResource PlainList}"
+                             ItemsSource="{Binding ConnectionsView}"
+                             SelectedItem="{Binding SelectedConnection}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160" />
+                                        <ColumnDefinition Width="60" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="70" />
+                                        <ColumnDefinition Width="100" />
+                                        <ColumnDefinition Width="110" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding ProcessName}" Style="{StaticResource Cell}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Pid}" Style="{StaticResource Cell}"
+                                               Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding RemoteDisplay}" Style="{StaticResource Cell}"
+                                               ToolTip="{Binding RemoteEndpoint}" />
+                                    <TextBlock Grid.Column="3" Text="{Binding RemotePort}" Style="{StaticResource Cell}" />
+                                    <TextBlock Grid.Column="4" Text="{Binding ServiceHint}" Style="{StaticResource Cell}"
+                                               Foreground="{DynamicResource AccentBrush}" />
+                                    <TextBlock Grid.Column="5" Text="{Binding State}" Style="{StaticResource Cell}"
+                                               Foreground="{StaticResource TextMutedBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="3" Text="{Binding ConnectionStatus}" Margin="10,10,0,0"
+                               FontFamily="{StaticResource MonoFont}" FontSize="11"
+                               Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+
+            <!-- ================================================= CHEMIN RÉSEAU -->
+            <Border Grid.Row="2" Style="{StaticResource GlassPanel}" Margin="12,12,0,10"
+                    Visibility="{Binding ShowRoute, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="18,16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Relancer la découverte" Style="{StaticResource PrimaryButton}"
+                                Command="{Binding RediscoverCommand}"
+                                IsEnabled="{Binding IsDiscovering, Converter={StaticResource InverseBool}}" />
+                        <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" Width="420"
+                                   FontFamily="{StaticResource UiFont}" FontSize="11.5"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Text="Chaque saut entre ce PC et 8.8.8.8. À relancer après un changement de réseau (Wi-Fi, VPN, partage de connexion) : la topologie n'est découverte qu'une fois au démarrage." />
+                    </StackPanel>
+
+                    <Grid Grid.Row="1" Margin="10,14,10,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="90" />
+                            <ColumnDefinition Width="170" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="SAUT" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="1" Text="ROUTEUR" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="2" Text="LATENCE" Style="{StaticResource HeadCell}" />
+                        <TextBlock Grid.Column="3" Text="COURBE" Style="{StaticResource HeadCell}" />
+                    </Grid>
+                    <Border Grid.Row="1" Height="1" Background="#18FFFFFF" VerticalAlignment="Bottom" />
+
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Hops}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="10,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="90" />
+                                            <ColumnDefinition Width="170" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Label}" Style="{StaticResource Cell}"
+                                                   Foreground="{StaticResource TextMutedBrush}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Host}" Style="{StaticResource Cell}" />
+                                        <TextBlock Grid.Column="2" Text="{Binding RttText}" Style="{StaticResource Cell}"
+                                                   Foreground="{Binding Health, Converter={StaticResource HealthToBrush}}" />
+                                        <Polyline Grid.Column="3" Points="{Binding SparklinePoints}" StrokeThickness="1.3"
+                                                  Width="150" Height="20" HorizontalAlignment="Left"
+                                                  Stroke="{Binding Health, Converter={StaticResource HealthToBrush}}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
         </Grid>
 
-        <!-- Statistiques -->
-        <StackPanel Grid.Column="1" Margin="12,6,0,0">
-            <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
-                <StackPanel Margin="22,20">
-                    <TextBlock Text="PING (meilleur maillon)" Style="{StaticResource LabelText}" />
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding Ping}" Style="{StaticResource MetricText}" />
-                        <TextBlock Text="ms" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+        <!-- ================================================= COLONNE DROITE -->
+        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Margin="12,6,0,0">
+            <StackPanel>
+
+                <!-- Verdict : la corrélation des maillons, pas une mesure de plus -->
+                <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
+                    <StackPanel Margin="22,18">
+                        <TextBlock Text="DIAGNOSTIC" Style="{StaticResource LabelText}" />
+                        <TextBlock Text="{Binding VerdictTitle}" Margin="0,6,0,0"
+                                   FontFamily="{StaticResource UiFont}" FontSize="16" FontWeight="SemiBold"
+                                   TextWrapping="Wrap"
+                                   Foreground="{Binding VerdictSeverity, Converter={StaticResource HealthToBrush}}" />
+                        <TextBlock Text="{Binding VerdictDetail}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                   FontFamily="{StaticResource UiFont}" FontSize="12"
+                                   Foreground="{StaticResource TextMutedBrush}" />
                     </StackPanel>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
-                <StackPanel Margin="22,20">
-                    <TextBlock Text="DÉBIT DESCENDANT (actif)" Style="{StaticResource LabelText}" />
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding DownloadText}" Style="{StaticResource MetricText}" />
-                        <TextBlock Text="Mb/s" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                </Border>
+
+                <!-- Test de débit : mesure la capacité, contrairement aux jauges ci-dessous -->
+                <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
+                    <StackPanel Margin="22,18">
+                        <TextBlock Text="TEST DE DÉBIT (CAPACITÉ)" Style="{StaticResource LabelText}" />
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="{Binding SpeedDownText}" FontFamily="{StaticResource MonoFont}"
+                                           FontSize="20" Foreground="{DynamicResource AccentBrush}" />
+                                <TextBlock Text="↓ Mb/s" Style="{StaticResource LabelText}" FontSize="9" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="{Binding SpeedUpText}" FontFamily="{StaticResource MonoFont}"
+                                           FontSize="20" Foreground="{DynamicResource AccentBrush}" />
+                                <TextBlock Text="↑ Mb/s" Style="{StaticResource LabelText}" FontSize="9" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="{Binding SpeedLatencyText}" FontFamily="{StaticResource MonoFont}"
+                                           FontSize="20" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <TextBlock Text="LATENCE ms" Style="{StaticResource LabelText}" FontSize="9" />
+                            </StackPanel>
+                        </Grid>
+
+                        <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding SpeedProgress, Mode=OneWay}"
+                                     Maximum="100" Margin="0,12,0,0"
+                                     Visibility="{Binding IsSpeedTesting, Converter={StaticResource BoolToVis}}" />
+
+                        <TextBlock Text="{Binding SpeedStatus}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="10.5"
+                                   Foreground="{StaticResource TextMutedBrush}" />
+                        <Button Content="{Binding SpeedButtonText}" Style="{StaticResource PrimaryButton}"
+                                Margin="0,12,0,0" HorizontalAlignment="Left"
+                                Command="{Binding RunSpeedTestCommand}" />
+                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontFamily="{StaticResource UiFont}"
+                                   FontSize="10.5" Foreground="{StaticResource TextMutedBrush}"
+                                   Text="Génère volontairement du trafic vers speed.cloudflare.com pendant une vingtaine de secondes. Les jauges ci-dessous, elles, n'observent que le trafic déjà en cours." />
                     </StackPanel>
-                    <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding DownloadBar, Mode=OneWay}" Maximum="200" Margin="0,8,0,0" />
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
-                <StackPanel Margin="22,20">
-                    <TextBlock Text="DÉBIT MONTANT (actif)" Style="{StaticResource LabelText}" />
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding UploadText}" Style="{StaticResource MetricText}" />
-                        <TextBlock Text="Mb/s" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                </Border>
+
+                <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
+                    <StackPanel Margin="22,18">
+                        <TextBlock Text="PING (meilleur maillon)" Style="{StaticResource LabelText}" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Ping}" Style="{StaticResource MetricText}" />
+                            <TextBlock Text="ms" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                            <TextBlock Text="±" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="12,0,0,6" />
+                            <TextBlock Text="{Binding JitterText}" FontFamily="{StaticResource MonoFont}" FontSize="14"
+                                       Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                            <TextBlock Text="ms de gigue" Foreground="{StaticResource TextMutedBrush}"
+                                       FontSize="10" VerticalAlignment="Bottom" Margin="4,0,0,7" />
+                        </StackPanel>
                     </StackPanel>
-                    <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding UploadBar, Mode=OneWay}" Maximum="100" Margin="0,8,0,0" />
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource GlassPanel}">
-                <StackPanel Margin="22,20">
-                    <TextBlock Text="PACKET LOSS (moyen)" Style="{StaticResource LabelText}" />
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding PacketLossText}" Style="{StaticResource MetricText}" />
-                        <TextBlock Text="%" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                </Border>
+
+                <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
+                    <StackPanel Margin="22,18">
+                        <TextBlock Text="DÉBIT DESCENDANT (trafic réel)" Style="{StaticResource LabelText}" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding DownloadText}" Style="{StaticResource MetricText}" />
+                            <TextBlock Text="Mb/s" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                        </StackPanel>
+                        <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding DownloadBar, Mode=OneWay}" Maximum="200" Margin="0,8,0,0" />
                     </StackPanel>
-                </StackPanel>
-            </Border>
-        </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
+                    <StackPanel Margin="22,18">
+                        <TextBlock Text="DÉBIT MONTANT (trafic réel)" Style="{StaticResource LabelText}" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding UploadText}" Style="{StaticResource MetricText}" />
+                            <TextBlock Text="Mb/s" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                        </StackPanel>
+                        <ProgressBar Style="{StaticResource HoloBar}" Value="{Binding UploadBar, Mode=OneWay}" Maximum="100" Margin="0,8,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource GlassPanel}" Margin="0,0,0,12">
+                    <StackPanel Margin="22,18">
+                        <TextBlock Text="PACKET LOSS (moyen)" Style="{StaticResource LabelText}" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding PacketLossText}" Style="{StaticResource MetricText}" />
+                            <TextBlock Text="%" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding PacketLossDetail}" FontFamily="{StaticResource MonoFont}"
+                                   FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
     </Grid>
 </UserControl>

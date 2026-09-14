@@ -1,3 +1,4 @@
+﻿using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Windows.Threading;
@@ -108,23 +109,85 @@ public class NetworkService
         }
     }
 
-    /// <summary>Traceroute (TTL croissant) pour découvrir le vrai routeur ISP et un peer.</summary>
+    /// <summary>
+    /// Chemin complet vers l'Internet public, un maillon par saut. Alimenté par le
+    /// traceroute : c'est la même sonde qui sert à désigner l'ISP et le peer, mais tous
+    /// les sauts intermédiaires sont désormais conservés au lieu d'être jetés.
+    /// </summary>
+    public ObservableCollection<NetworkNode> Hops { get; } = new();
+
+    /// <summary>Vrai pendant une découverte : la vue désactive le bouton de relance.</summary>
+    public bool IsDiscovering { get; private set; }
+
+    /// <summary>Nombre maximal de sauts sondés. Au-delà, on est déjà dans le cœur de réseau.</summary>
+    private const int MaxHops = 15;
+
+    /// <summary>
+    /// Relance une découverte complète : interface active, gateway, DNS et traceroute.
+    /// Nécessaire après un changement de réseau (Wi-Fi, VPN, partage de connexion) —
+    /// sans cela la topologie affichée reste celle du démarrage de l'application.
+    /// </summary>
+    public async Task RediscoverAsync()
+    {
+        if (IsDiscovering) return;
+        IsDiscovering = true;
+        Updated?.Invoke();
+        try
+        {
+            Discover();
+            await DiscoverHopsAsync();
+            await RefreshAsync();
+        }
+        finally
+        {
+            IsDiscovering = false;
+            Updated?.Invoke();
+        }
+    }
+
+    /// <summary>Traceroute (TTL croissant) : chemin complet, dont le routeur ISP et un peer.</summary>
     private async Task DiscoverHopsAsync()
     {
         var hops = new List<string>();
+        var discovered = new List<NetworkNode>();
+
         try
         {
             using var ping = new Ping();
             var buffer = new byte[32];
-            for (int ttl = 1; ttl <= 8; ttl++)
+            for (int ttl = 1; ttl <= MaxHops; ttl++)
             {
                 var reply = await ping.SendPingAsync("8.8.8.8", 1000, buffer, new PingOptions(ttl, true));
+
+                var node = new NetworkNode { Label = $"SAUT {ttl}" };
                 if (reply.Address != null && !reply.Address.Equals(IPAddress.Any))
+                {
                     hops.Add(reply.Address.ToString());
+                    node.Host = reply.Address.ToString();
+                    node.Unresolved = false;
+                    // TimedOut avec une adresse = le routeur a bien renvoyé un TTL expiré :
+                    // c'est une réponse valide pour un traceroute, pas une perte.
+                    node.Reachable = true;
+                    node.EverAnswered = true;
+                    node.Rtt = reply.RoundtripTime;
+                    node.RecordSample();
+                }
+                else
+                {
+                    // Saut muet : il ne renvoie pas de TTL expiré. Fréquent et sans gravité,
+                    // le chemin continue derrière lui.
+                    node.Host = "* * *";
+                    node.Unresolved = true;
+                }
+
+                discovered.Add(node);
                 if (reply.Status == IPStatus.Success) break;
             }
         }
         catch { /* ICMP peut être filtré : best-effort */ }
+
+        Hops.Clear();
+        foreach (var h in discovered) Hops.Add(h);
 
         // hop 1 = gateway, hop 2 ≈ ISP, un hop du milieu ≈ peer
         var external = hops.Where(h => h != Gateway.Host).Distinct().ToList();
@@ -134,6 +197,7 @@ public class NetworkService
         // Reverse DNS best-effort pour révéler le FAI (ex: *.orange.fr)
         await TryResolveName(Isp);
         await TryResolveName(Peer);
+        foreach (var h in Hops.Where(h => !h.Unresolved)) await TryResolveName(h);
     }
 
     private static async Task TryResolveName(NetworkNode n)
@@ -224,6 +288,7 @@ public class NetworkService
         node.Reachable = ok > 0;
         node.Loss = node.EverAnswered ? Math.Round((tries - ok) / (double)tries * 100) : 0;
         node.Rtt = ok > 0 ? Math.Round(sum / ok) : -1;
+        node.RecordSample();
     }
 
     /// <summary>Débit réseau ACTIF réel (delta d'octets sur l'interface, converti en Mb/s).</summary>

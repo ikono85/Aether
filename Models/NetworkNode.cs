@@ -1,3 +1,5 @@
+using System.Windows;
+using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace Aether.Models;
@@ -44,6 +46,69 @@ public partial class NetworkNode : ObservableObject
         : !Reachable ? "timeout"
         : Rtt < 0 ? "…"
         : $"{Rtt:0} ms";
+
+    // ------------------------------------------------------------ Historique et jitter
+
+    /// <summary>Nombre de relevés conservés, aligné sur les courbes de l'onglet Performance.</summary>
+    public const int HistoryCap = 60;
+
+    private readonly List<double> _history = new();
+
+    /// <summary>
+    /// Gigue : moyenne des écarts absolus entre relevés consécutifs (RFC 3550 simplifié).
+    /// -1 tant qu'on n'a pas deux mesures réussies. C'est elle, et non le ping moyen,
+    /// qui explique une connexion « qui saccade » alors que la latence semble bonne.
+    /// </summary>
+    public double Jitter { get; private set; } = -1;
+
+    public string JitterText => Jitter < 0 ? "—" : $"{Jitter:0.#} ms";
+
+    /// <summary>Courbe du RTT prête à tracer, normalisée dans <see cref="SparkWidth"/> × <see cref="SparkHeight"/>.</summary>
+    public PointCollection SparklinePoints { get; private set; } = new();
+
+    public const double SparkWidth = 150;
+    public const double SparkHeight = 26;
+
+    /// <summary>
+    /// Enregistre le relevé courant. Les timeouts ne sont pas poussés dans l'historique :
+    /// une valeur manquante n'est pas une latence nulle, et l'injecter fausserait la gigue.
+    /// </summary>
+    public void RecordSample()
+    {
+        if (!Reachable || Rtt < 0) return;
+
+        _history.Add(Rtt);
+        if (_history.Count > HistoryCap) _history.RemoveAt(0);
+
+        if (_history.Count >= 2)
+        {
+            double sum = 0;
+            for (int i = 1; i < _history.Count; i++) sum += Math.Abs(_history[i] - _history[i - 1]);
+            Jitter = Math.Round(sum / (_history.Count - 1), 1);
+            OnPropertyChanged(nameof(Jitter));
+            OnPropertyChanged(nameof(JitterText));
+        }
+
+        BuildSparkline();
+    }
+
+    private void BuildSparkline()
+    {
+        var pts = new PointCollection();
+        if (_history.Count >= 2)
+        {
+            // Échelle plancher à 20 ms : sans elle, une connexion stable à 3-4 ms produirait
+            // une courbe en dents de scie spectaculaire pour une variation d'une milliseconde.
+            double max = Math.Max(20, _history.Max());
+            double step = SparkWidth / (_history.Count - 1);
+
+            for (int i = 0; i < _history.Count; i++)
+                pts.Add(new Point(i * step, SparkHeight - Math.Clamp(_history[i] / max, 0, 1) * SparkHeight));
+        }
+        pts.Freeze();
+        SparklinePoints = pts;
+        OnPropertyChanged(nameof(SparklinePoints));
+    }
 
     partial void OnRttChanged(double value) { OnPropertyChanged(nameof(Health)); OnPropertyChanged(nameof(RttText)); }
     partial void OnLossChanged(double value) => OnPropertyChanged(nameof(Health));
