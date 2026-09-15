@@ -12,21 +12,27 @@
             <Setter Property="StrokeThickness" Value="1.5" />
             <Setter Property="StrokeDashArray" Value="1 6" />
             <Setter Property="Opacity" Value="0.85" />
+            <!-- Animation coupée avec les effets visuels ou si Windows désactive les animations. -->
             <Style.Triggers>
-                <EventTrigger RoutedEvent="Loaded">
-                    <BeginStoryboard>
-                        <Storyboard RepeatBehavior="Forever">
-                            <DoubleAnimation Storyboard.TargetProperty="StrokeDashOffset"
-                                             From="14" To="0" Duration="0:0:1" />
-                        </Storyboard>
-                    </BeginStoryboard>
-                </EventTrigger>
+                <DataTrigger Binding="{Binding DataContext.Settings.AnimationsEnabled, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard Name="Flow">
+                            <Storyboard RepeatBehavior="Forever">
+                                <DoubleAnimation Storyboard.TargetProperty="StrokeDashOffset"
+                                                 From="14" To="0" Duration="0:0:1" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <StopStoryboard BeginStoryboardName="Flow" />
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="Node" TargetType="Ellipse">
             <Setter Property="Width" Value="18" />
             <Setter Property="Height" Value="18" />
-            <Setter Property="Fill" Value="#FF12161F" />
+            <Setter Property="Fill" Value="{StaticResource GraphiteBrush}" />
             <Setter Property="StrokeThickness" Value="2" />
         </Style>
         <Style x:Key="NodeLabel" TargetType="TextBlock" BasedOn="{StaticResource LabelText}">
@@ -35,7 +41,7 @@
         </Style>
         <Style x:Key="HostLabel" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
-            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeCaption}" />
             <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
             <Setter Property="TextAlignment" Value="Center" />
             <Setter Property="Width" Value="180" />
@@ -50,9 +56,7 @@
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         </Style>
-        <Style x:Key="HeadCell" TargetType="TextBlock" BasedOn="{StaticResource LabelText}">
-            <Setter Property="FontSize" Value="10" />
-        </Style>
+        <Style x:Key="HeadCell" TargetType="TextBlock" BasedOn="{StaticResource LabelText}" />
 
         <!-- Lignes sélectionnables sans le bleu système par défaut -->
         <Style x:Key="RowContainer" TargetType="ListBoxItem">
@@ -201,11 +205,8 @@
 
                         <!-- PC central -->
                         <Ellipse Canvas.Left="250" Canvas.Top="250" Width="100" Height="100"
-                                 Fill="#FF12161F" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2">
-                            <Ellipse.Effect>
-                                <DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.8" Color="#9B6BFF" />
-                            </Ellipse.Effect>
-                        </Ellipse>
+                                 Fill="{StaticResource GraphiteBrush}" Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"
+                                 Effect="{DynamicResource GlowNodeEffect}" />
                         <TextBlock Text="PC" Canvas.Left="283" Canvas.Top="282" FontFamily="{StaticResource MonoFont}"
                                    FontSize="26" Foreground="{StaticResource TextPrimaryBrush}" />
                         <TextBlock Text="⇅ INTERNET" Canvas.Left="250" Canvas.Top="356" Style="{StaticResource LabelText}"
@@ -509,17 +510,17 @@
                             <StackPanel>
                                 <TextBlock Text="{Binding SpeedDownText}" FontFamily="{StaticResource MonoFont}"
                                            FontSize="20" Foreground="{DynamicResource AccentBrush}" />
-                                <TextBlock Text="↓ Mb/s" Style="{StaticResource LabelText}" FontSize="9" />
+                                <TextBlock Text="↓ Mb/s" Style="{StaticResource LabelText}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1">
                                 <TextBlock Text="{Binding SpeedUpText}" FontFamily="{StaticResource MonoFont}"
                                            FontSize="20" Foreground="{DynamicResource AccentBrush}" />
-                                <TextBlock Text="↑ Mb/s" Style="{StaticResource LabelText}" FontSize="9" />
+                                <TextBlock Text="↑ Mb/s" Style="{StaticResource LabelText}" />
                             </StackPanel>
                             <StackPanel Grid.Column="2">
                                 <TextBlock Text="{Binding SpeedLatencyText}" FontFamily="{StaticResource MonoFont}"
                                            FontSize="20" Foreground="{StaticResource TextPrimaryBrush}" />
-                                <TextBlock Text="LATENCE ms" Style="{StaticResource LabelText}" FontSize="9" />
+                                <TextBlock Text="LATENCE ms" Style="{StaticResource LabelText}" />
                             </StackPanel>
                         </Grid>
 
@@ -528,13 +529,13 @@
                                      Visibility="{Binding IsSpeedTesting, Converter={StaticResource BoolToVis}}" />
 
                         <TextBlock Text="{Binding SpeedStatus}" Margin="0,8,0,0" TextWrapping="Wrap"
-                                   FontFamily="{StaticResource MonoFont}" FontSize="10.5"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="{StaticResource FontSizeSmall}"
                                    Foreground="{StaticResource TextMutedBrush}" />
                         <Button Content="{Binding SpeedButtonText}" Style="{StaticResource PrimaryButton}"
                                 Margin="0,12,0,0" HorizontalAlignment="Left"
                                 Command="{Binding RunSpeedTestCommand}" />
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontFamily="{StaticResource UiFont}"
-                                   FontSize="10.5" Foreground="{StaticResource TextMutedBrush}"
+                                   FontSize="{StaticResource FontSizeSmall}" Foreground="{StaticResource TextMutedBrush}"
                                    Text="Génère volontairement du trafic vers speed.cloudflare.com pendant une vingtaine de secondes. Les jauges ci-dessous, elles, n'observent que le trafic déjà en cours." />
                     </StackPanel>
                 </Border>
@@ -549,7 +550,7 @@
                             <TextBlock Text="{Binding JitterText}" FontFamily="{StaticResource MonoFont}" FontSize="14"
                                        Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
                             <TextBlock Text="ms de gigue" Foreground="{StaticResource TextMutedBrush}"
-                                       FontSize="10" VerticalAlignment="Bottom" Margin="4,0,0,7" />
+                                       FontSize="{StaticResource FontSizeCaption}" VerticalAlignment="Bottom" Margin="4,0,0,7" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -584,7 +585,7 @@
                             <TextBlock Text="%" Foreground="{StaticResource TextMutedBrush}" VerticalAlignment="Bottom" Margin="4,0,0,6" />
                         </StackPanel>
                         <TextBlock Text="{Binding PacketLossDetail}" FontFamily="{StaticResource MonoFont}"
-                                   FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,4,0,0" />
+                                   FontSize="{StaticResource FontSizeCaption}" Foreground="{StaticResource TextMutedBrush}" Margin="0,4,0,0" />
                     </StackPanel>
                 </Border>
             </StackPanel>

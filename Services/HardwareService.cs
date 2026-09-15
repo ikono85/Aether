@@ -1,6 +1,8 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows.Threading;
 using Aether.Models;
+using Aether.Services.Infrastructure;
 using LibreHardwareMonitor.Hardware;
 
 namespace Aether.Services;
@@ -10,16 +12,26 @@ namespace Aether.Services;
 /// une mesure qu'aucun capteur ne fournit reste à <see cref="double.NaN"/> et l'interface
 /// affiche « — ».
 ///
-/// La lecture des températures CPU passe par un pilote noyau : sans droits administrateur,
-/// LibreHardwareMonitor ne peut pas le charger et les températures processeur restent
-/// indisponibles. <see cref="SensorsAvailable"/> et <see cref="StatusMessage"/> le disent.
+/// La lecture des capteurs (SMART, Super I/O, SPD…) peut prendre plusieurs dizaines de
+/// millisecondes : elle s'exécute sur un thread de fond, et seule la recopie des valeurs dans
+/// les objets liés à l'interface passe par le Dispatcher. Le chargement du pilote noyau
+/// (plusieurs secondes parfois) est lui aussi fait en fond, au premier cycle.
+///
+/// Si LibreHardwareMonitor ne démarre pas (pilote refusé, antivirus), la boucle continue
+/// quand même : les mesures réseau du Dashboard et le score de santé restent vivants.
 /// </summary>
 public class HardwareService : IDisposable
 {
-    private readonly DispatcherTimer _timer;
-    private Computer? _computer;
+    private readonly Dispatcher _dispatcher;
+    private readonly object _lhmGate = new();
     private readonly UpdateVisitor _visitor = new();
-    private readonly List<string> _disks = new();
+    private Computer? _computer;
+    private bool _initialized;
+    private volatile bool _disposed;
+    private HardwareDescription? _description;
+    private bool _descriptionApplied;
+    private CancellationTokenSource? _loopCts;
+    private long _intervalTicks = TimeSpan.FromSeconds(1).Ticks;
 
     /// <summary>
     /// Source unique des mesures réseau. LibreHardwareMonitor sait aussi les lire, mais
@@ -51,53 +63,89 @@ public class HardwareService : IDisposable
     public bool SensorsAvailable { get; private set; }
 
     /// <summary>Diagnostic affichable : ce qui est mesuré, ce qui ne l'est pas et pourquoi.</summary>
-    public string StatusMessage { get; private set; } = "Capteurs non initialisés.";
+    public string StatusMessage { get; private set; } = "Initialisation des capteurs…";
 
+    /// <summary>Levé sur le thread d'interface après chaque cycle.</summary>
     public event Action? Updated;
 
     public HardwareService(NetworkService? network = null)
     {
         _network = network;
+        _dispatcher = Dispatcher.CurrentDispatcher;
         Modules = new[] { Cpu, Gpu, Ram, Ssd, Net };
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
-        _timer.Tick += (_, _) => Sample();
     }
 
-    public void Start()
+    public void Start() => StartLoop();
+
+    public void Stop()
     {
-        if (!Initialize()) return;
-        Sample();
-        _timer.Start();
+        var cts = _loopCts;
+        _loopCts = null;
+        cts?.Cancel();
     }
 
-    public void Stop() => _timer.Stop();
+    /// <summary>Vrai entre <see cref="Start"/> et <see cref="Stop"/> : la boucle échantillonne.</summary>
+    public bool IsRunning => _loopCts != null;
 
-    /// <summary>Vrai entre <see cref="Start"/> et <see cref="Stop"/> : le timer échantillonne.</summary>
-    public bool IsRunning => _timer.IsEnabled;
-
-    /// <summary>
-    /// Période d'échantillonnage. Réglable à chaud : le <see cref="DispatcherTimer"/>
-    /// reprend le nouvel intervalle sans devoir réinitialiser la couche capteurs.
-    /// </summary>
+    /// <summary>Période d'échantillonnage, réglable à chaud (250 ms minimum).</summary>
     public TimeSpan Interval
     {
-        get => _timer.Interval;
-        set => _timer.Interval = value < TimeSpan.FromMilliseconds(250)
-            ? TimeSpan.FromMilliseconds(250)
-            : value;
+        get => TimeSpan.FromTicks(Interlocked.Read(ref _intervalTicks));
+        set
+        {
+            var v = value < TimeSpan.FromMilliseconds(250) ? TimeSpan.FromMilliseconds(250) : value;
+            Interlocked.Exchange(ref _intervalTicks, v.Ticks);
+        }
     }
 
-    /// <summary>Reprend l'échantillonnage après une pause, si les capteurs sont initialisés.</summary>
-    public void Resume()
+    /// <summary>Reprend l'échantillonnage après une pause.</summary>
+    public void Resume() => StartLoop();
+
+    private void StartLoop()
     {
-        if (SensorsAvailable && !_timer.IsEnabled) _timer.Start();
+        if (_loopCts != null || _disposed) return;
+        var cts = new CancellationTokenSource();
+        _loopCts = cts;
+        _ = Task.Run(() => LoopAsync(cts.Token));
     }
 
-    private bool Initialize()
+    private async Task LoopAsync(CancellationToken ct)
     {
+        while (!ct.IsCancellationRequested)
+        {
+            long started = Stopwatch.GetTimestamp();
+            try
+            {
+                var snapshot = ReadSnapshot();
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    if (!ct.IsCancellationRequested && !_disposed) Apply(snapshot);
+                }, DispatcherPriority.Background, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) { Log.Error("Cycle de télémétrie matérielle interrompu.", ex); }
+
+            var wait = Interval - Stopwatch.GetElapsedTime(started);
+            if (wait < TimeSpan.FromMilliseconds(50)) wait = TimeSpan.FromMilliseconds(50);
+            try { await Task.Delay(wait, ct); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    // ------------------------------------------------------------------ Thread de fond
+
+    private sealed record HardwareDescription(bool Available, string Cpu, string Gpu, bool HasRam,
+                                              List<string> Disks, string Status);
+
+    /// <summary>Charge LibreHardwareMonitor au premier cycle. Appelé sous <see cref="_lhmGate"/>.</summary>
+    private void EnsureInitialized()
+    {
+        if (_initialized || _disposed) return;
+        _initialized = true;
+
         try
         {
-            _computer = new Computer
+            var computer = new Computer
             {
                 IsCpuEnabled = true,
                 IsGpuEnabled = true,
@@ -106,156 +154,229 @@ public class HardwareService : IDisposable
                 IsMotherboardEnabled = true,
                 IsControllerEnabled = true
             };
-            _computer.Open();
-            SensorsAvailable = true;
-
-            DescribeHardware();
-            return true;
+            computer.Open();
+            _computer = computer;
+            _description = Describe(computer);
+            Log.Info(_description.Status);
         }
         catch (Exception ex)
         {
             // Pilote noyau refusé, antivirus, plateforme non prise en charge…
-            SensorsAvailable = false;
-            StatusMessage = $"Capteurs matériels indisponibles : {ex.Message}";
             _computer = null;
-            return false;
+            _description = new HardwareDescription(false, "", "", false, new List<string>(),
+                $"Capteurs matériels indisponibles : {ex.Message}");
+            Log.Warn("LibreHardwareMonitor n'a pas pu démarrer.", ex);
         }
     }
 
-    /// <summary>Renseigne le libellé de chaque module avec le matériel réellement détecté.</summary>
-    private void DescribeHardware()
+    private HardwareDescription Describe(Computer computer)
     {
-        if (_computer == null) return;
-
+        string cpu = "", gpu = "";
+        bool ram = false;
+        var disks = new List<string>();
         var found = new List<string>();
 
-        foreach (var hw in _computer.Hardware)
+        foreach (var hw in computer.Hardware)
         {
             switch (hw.HardwareType)
             {
-                case HardwareType.Cpu:
-                    Cpu.Detail = hw.Name;
-                    found.Add("CPU");
-                    break;
-
+                case HardwareType.Cpu: cpu = hw.Name; found.Add("CPU"); break;
                 case HardwareType.GpuNvidia:
                 case HardwareType.GpuAmd:
-                case HardwareType.GpuIntel:
-                    Gpu.Detail = hw.Name;
-                    found.Add("GPU");
-                    break;
-
-                case HardwareType.Memory:
-                    Ram.Detail = "Mémoire système";
-                    found.Add("RAM");
-                    break;
-
-                case HardwareType.Storage:
-                    _disks.Add(hw.Name);
-                    found.Add("Stockage");
-                    break;
-
-                case HardwareType.Motherboard:
-                    found.Add("Carte mère");
-                    break;
-
+                case HardwareType.GpuIntel: gpu = hw.Name; found.Add("GPU"); break;
+                case HardwareType.Memory: ram = true; found.Add("RAM"); break;
+                case HardwareType.Storage: disks.Add(hw.Name); found.Add("Stockage"); break;
+                case HardwareType.Motherboard: found.Add("Carte mère"); break;
             }
         }
-
-        Ssd.Detail = _disks.Count switch
-        {
-            0 => "",
-            1 => _disks[0],
-            _ => $"{_disks.Count} disques · le plus chaud"
-        };
 
         if (_network != null) found.Add("Réseau");
 
-        StatusMessage = found.Count == 0
+        var status = found.Count == 0
             ? "Aucun capteur matériel détecté sur ce PC."
             : $"Capteurs actifs : {string.Join(", ", found.Distinct())}.";
+
+        return new HardwareDescription(true, cpu, gpu, ram, disks, status);
     }
 
-    /// <summary>Un cycle de lecture. Toute mesure absente est remise à NaN, jamais devinée.</summary>
-    private void Sample()
+    private sealed class Snapshot
     {
-        if (_computer == null) return;
+        public double CpuTemp = double.NaN, CpuLoad = double.NaN;
+        public double GpuTemp = double.NaN, GpuLoad = double.NaN;
+        public double RamLoad = double.NaN, RamUsedGb = double.NaN, RamTotalGb = double.NaN, RamTemp = double.NaN;
+        public double SsdTemp = double.NaN, SsdLoad = double.NaN;
+        public List<SensorReading> Sensors { get; } = new();
+        public string? Error;
+    }
 
-        double cpuTemp = double.NaN, cpuLoad = double.NaN;
-        double gpuTemp = double.NaN, gpuLoad = double.NaN;
-        double ramLoad = double.NaN, ramUsedGb = double.NaN, ramTotalGb = double.NaN, ramTemp = double.NaN;
-        double ssdTemp = double.NaN, ssdLoad = double.NaN;
+    private enum SensorKind { Temperature, Fan, Power }
 
-        try
+    private readonly record struct SensorReading(string Id, SensorKind Kind, string Component,
+                                                 string Name, string Unit, double Value);
+
+    /// <summary>Un cycle de lecture. Toute mesure absente reste à NaN, jamais devinée.</summary>
+    private Snapshot ReadSnapshot()
+    {
+        lock (_lhmGate)
         {
-            foreach (var hw in _computer.Hardware)
+            EnsureInitialized();
+
+            var s = new Snapshot();
+            if (_computer == null) return s;
+
+            try
             {
-                hw.Accept(_visitor);
-                CollectSensors(hw);
-
-                switch (hw.HardwareType)
+                foreach (var hw in _computer.Hardware)
                 {
-                    case HardwareType.Cpu:
-                        cpuTemp = Prefer(cpuTemp,
-                            PickTemperature(hw, "Core (Tctl/Tdie)", "CPU Package", "Core Max", "Core Average"));
-                        cpuLoad = Prefer(cpuLoad, Pick(hw, SensorType.Load, "CPU Total"));
-                        break;
+                    hw.Accept(_visitor);
+                    CollectSensors(hw, s.Sensors);
 
-                    case HardwareType.GpuNvidia:
-                    case HardwareType.GpuAmd:
-                    case HardwareType.GpuIntel:
-                        gpuTemp = Prefer(gpuTemp, PickTemperature(hw, "GPU Core", "GPU Hot Spot", "GPU Package"));
-                        gpuLoad = Prefer(gpuLoad, Pick(hw, SensorType.Load, "GPU Core", "D3D 3D"));
-                        break;
+                    switch (hw.HardwareType)
+                    {
+                        case HardwareType.Cpu:
+                            s.CpuTemp = Prefer(s.CpuTemp,
+                                PickTemperature(hw, "Core (Tctl/Tdie)", "CPU Package", "Core Max", "Core Average"));
+                            s.CpuLoad = Prefer(s.CpuLoad, Pick(hw, SensorType.Load, "CPU Total"));
+                            break;
 
-                    case HardwareType.Memory:
-                        // LibreHardwareMonitor expose plusieurs composants mémoire :
-                        // « Total Memory » (la RAM physique), « Virtual Memory » (le fichier
-                        // d'échange, à ignorer) et une entrée par barrette pour la température.
-                        bool physical = hw.Name.Contains("Total", StringComparison.OrdinalIgnoreCase);
-                        bool virtualMem = hw.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase);
+                        case HardwareType.GpuNvidia:
+                        case HardwareType.GpuAmd:
+                        case HardwareType.GpuIntel:
+                            s.GpuTemp = Prefer(s.GpuTemp, PickTemperature(hw, "GPU Core", "GPU Hot Spot", "GPU Package"));
+                            s.GpuLoad = Prefer(s.GpuLoad, Pick(hw, SensorType.Load, "GPU Core", "D3D 3D"));
+                            break;
 
-                        if (physical || !virtualMem)
-                        {
-                            ramLoad = Prefer(ramLoad, Pick(hw, SensorType.Load, "Memory"));
-                            ramUsedGb = Prefer(ramUsedGb, Pick(hw, SensorType.Data, "Memory Used"));
-                            ramTotalGb = Prefer(ramTotalGb,
-                                Sum(hw, SensorType.Data, "Memory Used", "Memory Available"));
-                        }
+                        case HardwareType.Memory:
+                            // LibreHardwareMonitor expose plusieurs composants mémoire :
+                            // « Total Memory » (la RAM physique), « Virtual Memory » (le fichier
+                            // d'échange, à ignorer) et une entrée par barrette pour la température.
+                            bool physical = hw.Name.Contains("Total", StringComparison.OrdinalIgnoreCase);
+                            bool virtualMem = hw.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase);
 
-                        // Barrettes : on retient la plus chaude.
-                        ramTemp = Hotter(ramTemp, PickTemperature(hw));
-                        break;
+                            if (physical || !virtualMem)
+                            {
+                                s.RamLoad = Prefer(s.RamLoad, Pick(hw, SensorType.Load, "Memory"));
+                                s.RamUsedGb = Prefer(s.RamUsedGb, Pick(hw, SensorType.Data, "Memory Used"));
+                                s.RamTotalGb = Prefer(s.RamTotalGb,
+                                    Sum(hw, SensorType.Data, "Memory Used", "Memory Available"));
+                            }
 
-                    case HardwareType.Storage:
-                        // Plusieurs disques possibles : on retient le plus chaud et le plus sollicité.
-                        ssdTemp = Hotter(ssdTemp, PickTemperature(hw, "Temperature"));
-                        ssdLoad = Hotter(ssdLoad, Pick(hw, SensorType.Load, "Total Activity", "Used Space"));
-                        break;
+                            // Barrettes : on retient la plus chaude.
+                            s.RamTemp = Hotter(s.RamTemp, PickTemperature(hw));
+                            break;
 
+                        case HardwareType.Storage:
+                            // Plusieurs disques possibles : on retient le plus chaud et le plus sollicité.
+                            s.SsdTemp = Hotter(s.SsdTemp, PickTemperature(hw, "Temperature"));
+                            s.SsdLoad = Hotter(s.SsdLoad, Pick(hw, SensorType.Load, "Total Activity", "Used Space"));
+                            break;
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                s.Error = $"Lecture des capteurs interrompue : {ex.Message}";
+            }
+
+            return s;
         }
-        catch (Exception ex)
+    }
+
+    /// <summary>
+    /// Lit les capteurs de température, de ventilateur et de puissance du composant et de
+    /// ses sous-composants (la puce Super I/O de la carte mère est un sous-composant).
+    /// </summary>
+    private static void CollectSensors(IHardware hw, List<SensorReading> readings)
+    {
+        string component = hw.Parent is null ? hw.Name : $"{hw.Parent.Name} · {hw.Name}";
+
+        foreach (var sensor in hw.Sensors)
         {
-            StatusMessage = $"Lecture des capteurs interrompue : {ex.Message}";
+            // Plages physiques : les entrées non branchées renvoient -55, 127, 65535…
+            (SensorKind kind, string unit, float min, float max)? spec = sensor.SensorType switch
+            {
+                SensorType.Temperature => (SensorKind.Temperature, "°C", 0f, 125f),
+                SensorType.Fan => (SensorKind.Fan, "tr/min", -1f, 10000f),
+                SensorType.Power => (SensorKind.Power, "W", -1f, 2000f),
+                _ => null
+            };
+            if (spec is not { } s) continue;
+
+            // « Distance to TjMax » est un écart avant la limite thermique, pas une température.
+            if (sensor.Name.Contains("Distance to TjMax", StringComparison.OrdinalIgnoreCase)) continue;
+
+            double value = sensor.Value is float v && v > s.min && v < s.max ? v : double.NaN;
+            readings.Add(new SensorReading(sensor.Identifier.ToString(), s.kind, component, sensor.Name, s.unit, value));
         }
 
-        Cpu.Temperature = cpuTemp;
-        Cpu.Usage = cpuLoad;
-        Cpu.Performance = Headroom(cpuTemp, ceiling: 95);
+        foreach (var sub in hw.SubHardware) CollectSensors(sub, readings);
+    }
 
-        Gpu.Temperature = gpuTemp;
-        Gpu.Usage = gpuLoad;
-        Gpu.Performance = Headroom(gpuTemp, ceiling: 90);
+    // ------------------------------------------------------------------ Thread d'interface
 
-        Ram.Usage = ramLoad;
-        Ram.Temperature = ramTemp;
-        if (!double.IsNaN(ramUsedGb) && !double.IsNaN(ramTotalGb) && ramTotalGb > 0)
-            Ram.Detail = $"{ramUsedGb:0.0} / {ramTotalGb:0.0} Go";
+    private void ApplyDescription(HardwareDescription d)
+    {
+        SensorsAvailable = d.Available;
+        if (d.Cpu.Length > 0) Cpu.Detail = d.Cpu;
+        if (d.Gpu.Length > 0) Gpu.Detail = d.Gpu;
+        if (d.HasRam) Ram.Detail = "Mémoire système";
 
-        Ssd.Temperature = ssdTemp;
-        Ssd.Usage = ssdLoad;
+        Ssd.Detail = d.Disks.Count switch
+        {
+            0 => "",
+            1 => d.Disks[0],
+            _ => $"{d.Disks.Count} disques · le plus chaud"
+        };
+
+        StatusMessage = d.Status;
+    }
+
+    private void Apply(Snapshot s)
+    {
+        if (!_descriptionApplied && _description is { } d)
+        {
+            ApplyDescription(d);
+            _descriptionApplied = true;
+        }
+
+        foreach (var r in s.Sensors)
+        {
+            if (!_sensorById.TryGetValue(r.Id, out var entry))
+            {
+                // Un capteur n'apparaît qu'après une vraie mesure : les en-têtes de ventilateur
+                // vides (0 tr/min permanent) et les sondes absentes ne polluent pas la liste.
+                if (double.IsNaN(r.Value) || r.Value <= 0) continue;
+
+                entry = new HardwareSensor { Component = r.Component, Name = r.Name, Unit = r.Unit };
+                _sensorById[r.Id] = entry;
+                (r.Kind switch
+                {
+                    SensorKind.Temperature => Temperatures,
+                    SensorKind.Fan => Fans,
+                    _ => Powers
+                }).Add(entry);
+            }
+
+            entry.Value = r.Value;
+        }
+
+        Cpu.Temperature = s.CpuTemp;
+        Cpu.Usage = s.CpuLoad;
+        Cpu.Performance = Headroom(s.CpuTemp, ceiling: 95);
+
+        Gpu.Temperature = s.GpuTemp;
+        Gpu.Usage = s.GpuLoad;
+        Gpu.Performance = Headroom(s.GpuTemp, ceiling: 90);
+
+        Ram.Usage = s.RamLoad;
+        Ram.Temperature = s.RamTemp;
+        if (!double.IsNaN(s.RamUsedGb) && !double.IsNaN(s.RamTotalGb) && s.RamTotalGb > 0)
+            Ram.Detail = $"{s.RamUsedGb:0.0} / {s.RamTotalGb:0.0} Go";
+
+        Ssd.Temperature = s.SsdTemp;
+        Ssd.Usage = s.SsdLoad;
+
+        if (s.Error != null) StatusMessage = s.Error;
 
         SampleNetwork();
 
@@ -271,53 +392,11 @@ public class HardwareService : IDisposable
         DownloadMbps = _network.DownloadMbps;
         UploadMbps = _network.UploadMbps;
 
-        if (_network.InterfaceName.Length > 0)
-            Net.Detail = double.IsNaN(_network.LinkSpeedMbps)
+        Net.Detail = _network.InterfaceName.Length == 0
+            ? ""
+            : double.IsNaN(_network.LinkSpeedMbps)
                 ? _network.InterfaceName
                 : $"{_network.InterfaceName} · {_network.LinkSpeedMbps:0} Mb/s";
-    }
-
-    /// <summary>
-    /// Recopie les capteurs de température, de ventilateur et de puissance du composant et de
-    /// ses sous-composants (la puce Super I/O de la carte mère est un sous-composant).
-    /// </summary>
-    private void CollectSensors(IHardware hw)
-    {
-        string component = hw.Parent is null ? hw.Name : $"{hw.Parent.Name} · {hw.Name}";
-
-        foreach (var sensor in hw.Sensors)
-        {
-            // Plages physiques : les entrées non branchées renvoient -55, 127, 65535…
-            var (target, unit, min, max) = sensor.SensorType switch
-            {
-                SensorType.Temperature => (Temperatures, "°C", 0f, 125f),
-                SensorType.Fan => (Fans, "tr/min", -1f, 10000f),
-                SensorType.Power => (Powers, "W", -1f, 2000f),
-                _ => ((ObservableCollection<HardwareSensor>?)null, "", 0f, 0f)
-            };
-            if (target is null) continue;
-
-            // « Distance to TjMax » est un écart avant la limite thermique, pas une température.
-            if (sensor.Name.Contains("Distance to TjMax", StringComparison.OrdinalIgnoreCase)) continue;
-
-            double value = sensor.Value is float v && v > min && v < max ? v : double.NaN;
-
-            var id = sensor.Identifier.ToString();
-            if (!_sensorById.TryGetValue(id, out var entry))
-            {
-                // Un capteur n'apparaît qu'après une vraie mesure : les en-têtes de ventilateur
-                // vides (0 tr/min permanent) et les sondes absentes ne polluent pas la liste.
-                if (double.IsNaN(value) || value <= 0) continue;
-
-                entry = new HardwareSensor { Component = component, Name = sensor.Name, Unit = unit };
-                _sensorById[id] = entry;
-                target.Add(entry);
-            }
-
-            entry.Value = value;
-        }
-
-        foreach (var sub in hw.SubHardware) CollectSensors(sub);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -384,9 +463,14 @@ public class HardwareService : IDisposable
 
     public void Dispose()
     {
-        _timer.Stop();
-        try { _computer?.Close(); } catch { /* pilote déjà déchargé */ }
-        _computer = null;
+        _disposed = true;
+        Stop();
+        // Attend la fin d'une lecture en cours avant de décharger le pilote.
+        lock (_lhmGate)
+        {
+            try { _computer?.Close(); } catch { /* pilote déjà déchargé */ }
+            _computer = null;
+        }
         GC.SuppressFinalize(this);
     }
 

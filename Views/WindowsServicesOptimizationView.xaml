@@ -13,7 +13,8 @@
         <!-- Interrupteur d'activation d'un service -->
         <Style x:Key="ServiceSwitch" TargetType="ToggleButton">
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Focusable" Value="False" />
+            <!-- Atteignable au clavier : Tab pour y aller, Espace pour basculer. -->
+            <Setter Property="Focusable" Value="True" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -85,15 +86,15 @@
                                     Background="{Binding ImpactLevel, Converter={StaticResource ImpactToBrush}}"
                                     Opacity="0.9">
                                 <TextBlock Text="{Binding ImpactLevel, Converter={StaticResource ImpactToLabel}}"
-                                           FontSize="9" FontWeight="Bold"
+                                           FontSize="{StaticResource FontSizeCaption}" FontWeight="Bold"
                                            Foreground="{StaticResource CarbonBrush}" />
                             </Border>
 
                             <!-- Modifié par AETHER -->
-                            <Border Margin="6,0,0,0" CornerRadius="4" Padding="6,2" VerticalAlignment="Center"
-                                    Background="#229B6BFF"
+                            <Border Margin="6,0,0,0" CornerRadius="{StaticResource RadiusBadge}" Padding="6,2" VerticalAlignment="Center"
+                                    Background="{StaticResource AccentAiSoftBrush}"
                                     Visibility="{Binding IsModified, Converter={StaticResource BoolToVis}}">
-                                <TextBlock Text="MODIFIÉ" FontSize="9" FontWeight="Bold"
+                                <TextBlock Text="MODIFIÉ" FontSize="{StaticResource FontSizeCaption}" FontWeight="Bold"
                                            Foreground="{StaticResource AccentAiBrush}" />
                             </Border>
                         </StackPanel>
@@ -132,7 +133,8 @@
 
                     <!-- Restaurer cette ligne -->
                     <Button Grid.Column="1" Style="{StaticResource GhostButton}" VerticalAlignment="Center"
-                            Margin="0,0,10,0" ToolTip="Restaurer le type de démarrage par défaut"
+                            Margin="0,0,10,0" ToolTip="Restaurer le type de démarrage d'origine"
+                            AutomationProperties.Name="{Binding DisplayName, StringFormat=Restaurer {0}}"
                             Command="{Binding DataContext.RestoreServiceCommand,
                                       RelativeSource={RelativeSource AncestorType=UserControl}}"
                             CommandParameter="{Binding}"
@@ -143,6 +145,8 @@
                     <!-- Interrupteur : commande explicite, pas de binding IsChecked bidirectionnel -->
                     <ToggleButton Grid.Column="2" Style="{StaticResource ServiceSwitch}"
                                   IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                                  AutomationProperties.Name="{Binding DisplayName}"
+                                  AutomationProperties.HelpText="{Binding StartTypeText}"
                                   IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBool}}"
                                   Command="{Binding DataContext.ToggleServiceCommand,
                                             RelativeSource={RelativeSource AncestorType=UserControl}}"
@@ -163,25 +167,6 @@
         <StackPanel Margin="12,6,12,0">
             <TextBlock Text="SERVICES WINDOWS" Style="{StaticResource LabelText}" />
             <TextBlock Text="État réel des services système" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
-
-            <!-- Élévation requise -->
-            <Border Margin="0,14,0,0" CornerRadius="12" Padding="16,12" Background="#1AFFB347"
-                    BorderThickness="1" BorderBrush="#40FFB347"
-                    Visibility="{Binding NeedsElevation, Converter={StaticResource BoolToVis}}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="{Binding ElevationMessage}" TextWrapping="Wrap" VerticalAlignment="Center"
-                               FontSize="12" Foreground="{StaticResource TextPrimaryBrush}" />
-                    <Button Grid.Column="1" Margin="16,0,0,0" Content="RELANCER EN ADMIN"
-                            Command="{Binding ElevateCommand}" VerticalAlignment="Center"
-                            Cursor="Hand" Padding="14,8" FontSize="11" FontWeight="SemiBold"
-                            Background="#33FFB347" BorderBrush="#66FFB347" BorderThickness="1"
-                            Foreground="{StaticResource TextPrimaryBrush}" />
-                </Grid>
-            </Border>
 
             <!-- Rappel honnête sur le gain réel -->
             <Border Margin="0,10,0,0" CornerRadius="12" Padding="16,12" Background="#0AFFFFFF"
@@ -247,7 +232,7 @@
                                                        Foreground="{StaticResource TextPrimaryBrush}" />
                                             <Border Margin="10,0,0,0" CornerRadius="9" Padding="7,2"
                                                     Background="#14FFFFFF" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Count}" FontSize="10"
+                                                <TextBlock Text="{Binding Count}" FontSize="{StaticResource FontSizeCaption}"
                                                            FontFamily="{StaticResource MonoFont}"
                                                            Foreground="{StaticResource TextMutedBrush}" />
                                             </Border>

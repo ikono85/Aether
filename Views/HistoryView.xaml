@@ -1,0 +1,175 @@
+<UserControl x:Class="Aether.Views.HistoryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Aether">
+    <UserControl.Resources>
+        <local:BoolToVisConverter x:Key="BoolToVis" />
+
+        <Style x:Key="Stat" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,40,8" />
+        </Style>
+        <Style x:Key="Empty" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0,14,0,0" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="12,6,12,0">
+            <TextBlock Text="HISTORIQUE" Style="{StaticResource LabelText}" />
+            <TextBlock Text="Ce qu'AETHER a changé, et ce que la connexion a vécu" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,14,0,0">
+            <StackPanel Margin="12,0,12,12">
+
+                <!-- ============================ Modifications en place -->
+                <Border Style="{StaticResource GlassPanel}">
+                    <StackPanel Margin="24,20">
+                        <Grid>
+                            <TextBlock Text="MODIFICATIONS EN PLACE" Style="{StaticResource LabelText}" VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="Actualiser" Style="{StaticResource PrimaryButton}" Command="{Binding RefreshCommand}" Margin="0,0,10,0" />
+                                <Button Content="Exporter (JSON)" Style="{StaticResource PrimaryButton}" Command="{Binding ExportChangesCommand}" Margin="0,0,10,0" />
+                                <Button Content="Tout restaurer" Style="{StaticResource PrimaryButton}" Command="{Binding RestoreAllCommand}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Style="{StaticResource Empty}"
+                                   Text="Aucune modification en place : Windows est dans l'état où AETHER l'a trouvé."
+                                   Visibility="{Binding HasChanges, Converter={StaticResource BoolToVis}, ConverterParameter=invert}" />
+
+                        <ItemsControl ItemsSource="{Binding Changes}" Margin="0,14,0,0" Focusable="False">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border CornerRadius="12" Margin="0,4" Padding="16,12"
+                                            Background="{StaticResource GlassTintBrush}"
+                                            BorderThickness="1" BorderBrush="{StaticResource GlassStrokeBrush}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="120" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border CornerRadius="{StaticResource RadiusBadge}" Padding="6,2" VerticalAlignment="Center"
+                                                    HorizontalAlignment="Left" Background="{StaticResource AccentAiSoftBrush}">
+                                                <TextBlock Text="{Binding KindLabel}" FontSize="{StaticResource FontSizeCaption}"
+                                                           FontWeight="Bold" Foreground="{StaticResource AccentAiBrush}" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Margin="10,0,14,0">
+                                                <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold"
+                                                           FontSize="{StaticResource FontSizeTitle}" Foreground="{StaticResource TextPrimaryBrush}" />
+                                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="{StaticResource FontSizeSmall}"
+                                                           Foreground="{StaticResource TextMutedBrush}">
+                                                    <Run Text="{Binding Detail, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding WhenText, Mode=OneWay}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <Button Grid.Column="2" Content="Restaurer" Style="{StaticResource PrimaryButton}" VerticalAlignment="Center"
+                                                    Command="{Binding DataContext.RestoreCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    AutomationProperties.Name="{Binding Title, StringFormat=Restaurer {0}}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- ============================ Connexion sur 24 h -->
+                <Border Style="{StaticResource GlassPanel}" Margin="0,16,0,0">
+                    <StackPanel Margin="24,20">
+                        <Grid>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="CONNEXION SUR 24 HEURES" Style="{StaticResource LabelText}" />
+                                <TextBlock Text="{Binding CoverageText}" Style="{StaticResource LabelText}" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <Button Content="Exporter (CSV)" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Right"
+                                    Command="{Binding ExportMeasuresCommand}" />
+                        </Grid>
+
+                        <WrapPanel Margin="0,16,0,0">
+                            <StackPanel Style="{StaticResource Stat}">
+                                <TextBlock Text="{Binding AvailabilityText}" Style="{StaticResource MetricText}" />
+                                <TextBlock Text="DISPONIBILITÉ" Style="{StaticResource LabelText}" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource Stat}">
+                                <TextBlock Text="{Binding OutageCountText}" Style="{StaticResource MetricText}" />
+                                <TextBlock Text="COUPURES" Style="{StaticResource LabelText}" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource Stat}">
+                                <TextBlock Text="{Binding PingAverageText}" Style="{StaticResource MetricText}" />
+                                <TextBlock Text="LATENCE MOYENNE" Style="{StaticResource LabelText}" />
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource Stat}">
+                                <TextBlock Text="{Binding PingMaxText}" Style="{StaticResource MetricText}" />
+                                <TextBlock Text="LATENCE MAX" Style="{StaticResource LabelText}" />
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <TextBlock Text="LATENCE MOYENNE PAR TRANCHE DE 5 MIN (plafond 200 ms) · EN ROUGE : COUPURES"
+                                   Style="{StaticResource LabelText}" Margin="0,12,0,6" TextWrapping="Wrap" />
+                        <Viewbox Stretch="Fill" Height="130">
+                            <Grid Width="720" Height="120">
+                                <Rectangle Height="1" Fill="{StaticResource DividerBrush}" VerticalAlignment="Top" />
+                                <Rectangle Height="1" Fill="{StaticResource DividerBrush}" VerticalAlignment="Center" />
+                                <Rectangle Height="1" Fill="{StaticResource DividerBrush}" VerticalAlignment="Bottom" />
+                                <ItemsControl ItemsSource="{Binding OutageBars}" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Rectangle Width="{Binding Width}" Height="120" Opacity="0.35"
+                                                       Fill="{StaticResource AccentDangerBrush}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Polyline Points="{Binding PingPoints}" StrokeThickness="1.5" StrokeLineJoin="Round"
+                                          Stroke="{StaticResource AccentOptimalBrush}" />
+                            </Grid>
+                        </Viewbox>
+                        <Grid Margin="0,4,0,0">
+                            <TextBlock Text="il y a 24 h" Style="{StaticResource LabelText}" />
+                            <TextBlock Text="maintenant" Style="{StaticResource LabelText}" HorizontalAlignment="Right" />
+                        </Grid>
+
+                        <TextBlock Text="COUPURES DÉTAILLÉES" Style="{StaticResource LabelText}" Margin="0,18,0,0" />
+                        <TextBlock Style="{StaticResource Empty}" Margin="0,8,0,0"
+                                   Text="Aucune coupure enregistrée sur les dernières 24 heures."
+                                   Visibility="{Binding HasOutages, Converter={StaticResource BoolToVis}, ConverterParameter=invert}" />
+                        <ItemsControl ItemsSource="{Binding Outages}" Margin="0,8,0,0" Focusable="False">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontFamily="{StaticResource MonoFont}" FontSize="{StaticResource FontSizeSmall}"
+                                               Foreground="{StaticResource TextPrimaryBrush}" Margin="0,2">
+                                        <Run Text="{Binding Start, Mode=OneWay}" /><Run Text="   coupure de " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding Duration, Mode=OneWay}" Foreground="{StaticResource AccentDangerBrush}" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Style="{StaticResource GlassPanel}" CornerRadius="18" Margin="12,14,12,4">
+            <TextBlock Text="{Binding Status}" Margin="24,16" TextWrapping="Wrap"
+                       FontFamily="{StaticResource MonoFont}" FontSize="{StaticResource FontSizeSmall}"
+                       Foreground="{StaticResource TextPrimaryBrush}" />
+        </Border>
+    </Grid>
+</UserControl>

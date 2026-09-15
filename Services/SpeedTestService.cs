@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http;
 
 namespace Aether.Services;
@@ -13,6 +14,9 @@ public record SpeedTestResult(double DownloadMbps, double UploadMbps, double Lat
 ///
 /// Les points de mesure sont ceux de Cloudflare (speed.cloudflare.com), utilisés par leur
 /// propre test de débit : anycast, donc proche géographiquement, et sans clé d'API.
+///
+/// À exécuter hors du thread d'interface (Task.Run) : la boucle de lecture ne doit pas être
+/// cadencée par le Dispatcher, sinon c'est lui qu'on mesurerait sur un lien rapide.
 /// </summary>
 public class SpeedTestService
 {
@@ -21,6 +25,9 @@ public class SpeedTestService
 
     /// <summary>Durée maximale de chaque sens. Au-delà, on calcule sur ce qui a transité.</summary>
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(10);
+
+    /// <summary>Délai maximal d'une requête de latence : un serveur muet ne bloque pas le test.</summary>
+    private static readonly TimeSpan LatencyTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Taille d'un bloc téléchargé. Cloudflare répond 403 au-delà d'environ 50 Mo par
@@ -35,7 +42,11 @@ public class SpeedTestService
     private const int UploadFirstChunkBytes = 1 * 1024 * 1024;
     private const int UploadMaxChunkBytes = 25 * 1024 * 1024;
 
-    /// <summary>Progression 0-100 et libellé de l'étape en cours.</summary>
+    /// <summary>Au plus 10 notifications de progression par seconde.</summary>
+    private static readonly TimeSpan ProgressInterval = TimeSpan.FromMilliseconds(100);
+    private long _lastProgress;
+
+    /// <summary>Progression 0-100 et libellé de l'étape en cours (levé sur un thread de fond).</summary>
     public event Action<double, string>? Progress;
 
     public async Task<SpeedTestResult> RunAsync(CancellationToken ct)
@@ -47,27 +58,50 @@ public class SpeedTestService
 
         try
         {
-            Progress?.Invoke(5, "Mesure de la latence…");
-            latency = await MeasureLatencyAsync(http, ct);
+            Report(5, "Mesure de la latence…", force: true);
+            latency = await MeasureLatencyAsync(http, ct).ConfigureAwait(false);
 
-            Progress?.Invoke(15, "Mesure du débit descendant…");
-            down = await MeasureDownloadAsync(http, ct);
+            Report(15, "Mesure du débit descendant…", force: true);
+            down = await MeasureDownloadAsync(http, ct).ConfigureAwait(false);
 
-            Progress?.Invoke(60, "Mesure du débit montant…");
-            up = await MeasureUploadAsync(http, ct);
+            Report(60, "Mesure du débit montant…", force: true);
+            up = await MeasureUploadAsync(http, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return Failed("Test annulé.");
         }
         catch (OperationCanceledException)
         {
-            return new SpeedTestResult(double.NaN, double.NaN, double.NaN, "Test annulé.");
+            return Failed("Le serveur de mesure ne répond pas (délai dépassé).");
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
+        {
+            return Failed($"Le serveur de mesure limite les tests (code {(int)ex.StatusCode!}). Réessayez dans quelques minutes.");
+        }
+        catch (HttpRequestException ex)
+        {
+            return Failed($"Serveur de mesure injoignable : {ex.Message}");
         }
         catch (Exception ex)
         {
-            return new SpeedTestResult(double.NaN, double.NaN, double.NaN,
-                $"Test impossible : {ex.Message}");
+            Aether.Services.Infrastructure.Log.Warn("Test de débit impossible.", ex);
+            return Failed($"Test impossible : {ex.Message}");
         }
 
-        Progress?.Invoke(100, "Terminé.");
+        Report(100, "Terminé.", force: true);
         return new SpeedTestResult(down, up, latency, "Mesure terminée.");
+    }
+
+    private static SpeedTestResult Failed(string message) =>
+        new(double.NaN, double.NaN, double.NaN, message);
+
+    private void Report(double percent, string label, bool force = false)
+    {
+        long now = Stopwatch.GetTimestamp();
+        if (!force && Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastProgress), now) < ProgressInterval) return;
+        Interlocked.Exchange(ref _lastProgress, now);
+        Progress?.Invoke(percent, label);
     }
 
     /// <summary>Latence applicative (aller-retour HTTP), plus représentative qu'un ping ICMP.</summary>
@@ -76,8 +110,12 @@ public class SpeedTestService
         var samples = new List<double>();
         for (int i = 0; i < 5; i++)
         {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(LatencyTimeout);
+
             var sw = Stopwatch.StartNew();
-            using var r = await http.GetAsync(DownUrl + "0", HttpCompletionOption.ResponseHeadersRead, ct);
+            using var r = await http.GetAsync(DownUrl + "0", HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                                    .ConfigureAwait(false);
             r.EnsureSuccessStatusCode();
             sw.Stop();
             samples.Add(sw.Elapsed.TotalMilliseconds);
@@ -103,16 +141,16 @@ public class SpeedTestService
             while (!linked.IsCancellationRequested)
             {
                 using var response = await http.GetAsync(DownUrl + DownloadChunkBytes,
-                    HttpCompletionOption.ResponseHeadersRead, linked.Token);
+                    HttpCompletionOption.ResponseHeadersRead, linked.Token).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
 
-                await using var stream = await response.Content.ReadAsStreamAsync(linked.Token);
+                await using var stream = await response.Content.ReadAsStreamAsync(linked.Token).ConfigureAwait(false);
 
                 int read;
-                while ((read = await stream.ReadAsync(buffer, linked.Token)) > 0)
+                while ((read = await stream.ReadAsync(buffer, linked.Token).ConfigureAwait(false)) > 0)
                 {
                     total += read;
-                    Progress?.Invoke(15 + Math.Min(44, sw.Elapsed.TotalSeconds / Budget.TotalSeconds * 45),
+                    Report(15 + Math.Min(44, sw.Elapsed.TotalSeconds / Budget.TotalSeconds * 45),
                         $"Descendant… {total / 1_048_576.0:0} Mo");
                 }
             }
@@ -150,13 +188,13 @@ public class SpeedTestService
                 var started = sw.Elapsed;
 
                 using var content = new ByteArrayContent(payload, 0, chunk);
-                using var r = await http.PostAsync(UpUrl, content, linked.Token);
+                using var r = await http.PostAsync(UpUrl, content, linked.Token).ConfigureAwait(false);
                 r.EnsureSuccessStatusCode();
 
                 sent += chunk;
                 confirmed = sw.Elapsed;
 
-                Progress?.Invoke(60 + Math.Min(39, confirmed.TotalSeconds / Budget.TotalSeconds * 40),
+                Report(60 + Math.Min(39, confirmed.TotalSeconds / Budget.TotalSeconds * 40),
                     $"Montant… {sent / 1_048_576.0:0} Mo");
 
                 if ((confirmed - started).TotalSeconds < 1 && chunk < UploadMaxChunkBytes)

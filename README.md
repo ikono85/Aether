@@ -6,7 +6,7 @@ halos, lignes lumineuses fines, accent dynamique qui change selon l'état du PC
 
 ## Lancer
 
-Requiert le SDK .NET 8+ (build ciblée `net8.0-windows`, WPF).
+Requiert le SDK .NET 10 (build ciblée `net10.0-windows`, WPF).
 
 AETHER **demande les droits administrateur au démarrage** (`app.manifest` :
 `requireAdministrator`) : la lecture des températures CPU et carte mère passe par un pilote
@@ -20,10 +20,41 @@ dotnet build
 ```
 
 ```bash
-Start-Process ".\bin\Debug\net8.0-windows\Aether.exe" -Verb RunAs
+Start-Process ".\bin\Debug\net10.0-windows\Aether.exe" -Verb RunAs
 ```
 
 Ou ouvrir le terminal « en tant qu'administrateur », puis `dotnet run`.
+
+### Tests
+
+```bash
+dotnet test tests/Aether.Tests/Aether.Tests.csproj
+```
+
+Couvrent l'écriture atomique des journaux, la restauration du registre (liste blanche, entrées
+forgées rejetées), le journal des services (suffixes de session), le diagnostic réseau, la
+table TCP et le lancement des utilitaires système.
+
+### Distribution
+
+```bash
+dotnet publish Aether.csproj -c Release -r win-x64 --self-contained true -o publish\win-x64
+```
+
+Puis signer `Aether.exe` (Authenticode) et compiler `installer/Aether.iss` avec Inno Setup 6.
+L'installation dans `Program Files` est requise pour le démarrage automatique : AETHER refuse
+de créer une tâche élevée vers un exécutable modifiable sans droits administrateur.
+
+### Données et journaux
+
+| Emplacement | Contenu |
+|---|---|
+| `%ProgramData%\Aether` (administrateurs uniquement) | `restore.json`, `service-changes.json`, `dns-backups.json` — relus en administrateur, donc protégés et revalidés |
+| `%AppData%\Aether` | `settings.json`, `service-preferences.json` |
+| `%LocalAppData%\Aether\logs` | journal quotidien (7 jours), lignes `AUDIT` pour chaque modification système |
+
+Les écritures sont atomiques (copie `.bak`) ; un journal illisible est conservé en `.corrupt-…`
+et bloque les modifications au lieu d'être écrasé. Une seule instance d'AETHER peut tourner.
 
 ### Compte standard (PC de travail)
 
@@ -64,6 +95,57 @@ d'appliquer des modifications système (services, télémétrie, réseau).
 - `Views/` — Dashboard, Network, Optimization, Services, Performance, Settings.
 - `Themes/Theme.xaml` — palette carbone/graphite + styles verre.
 - `MainWindow.xaml` — chrome custom, **noyau système** animé + navigation.
+
+## Historique, protection et diagnostic
+
+- **Onglet Historique (Ctrl+7)** : liste unifiée de tout ce qu'AETHER a modifié (optimisations,
+  services, DNS), restauration élément par élément ou « Tout restaurer », export JSON. Il affiche
+  aussi 24 h de mesures réseau : disponibilité, coupures détaillées, latence par tranche de
+  5 minutes, export CSV (`%LocalAppData%\Aether\history`, 7 jours conservés).
+- **Point de restauration Windows** avant la première modification durable de chaque session
+  (réglable). Windows n'en accepte qu'un par 24 h : AETHER compare les points avant et après et
+  l'indique au lieu de prétendre l'avoir créé.
+- **Startup Manager** : choix des programmes, un par un, avant toute désactivation.
+- **Diagnostic** (Paramètres) : « Copier le diagnostic » ou « Exporter un rapport » (ZIP avec
+  journaux). Adresses IP publiques, nom du PC et nom d'utilisateur masqués ; rien n'est envoyé.
+  Un plantage ou un arrêt forcé est détecté au lancement suivant, qui propose le rapport.
+- **Accueil** au premier lancement : ce qu'AETHER fait, ce qu'il envoie (pings, test de débit à
+  la demande), et les choix correspondants.
+- **Mises à jour** : vérification facultative (désactivée par défaut) des versions publiées sur
+  GitHub, une fois par jour. Rien n'est téléchargé ni installé automatiquement : un installeur
+  exécuté en administrateur devra d'abord être signé et vérifié.
+
+### Ligne de commande
+
+| Commande | Effet | Code de sortie |
+|---|---|---|
+| `Aether.exe --restore-all` | Rétablit toutes les modifications (utilisé par le désinstalleur) | 0 succès · 1 échec partiel |
+| `Aether.exe --apply <module>` | Applique une optimisation sans interface | 2 argument invalide |
+| `Aether.exe --revert <module>` | Annule une optimisation | 3 AETHER déjà ouvert |
+
+`tests/integration/RestoreRoundTrip.ps1` applique puis annule chaque module réversible et
+compare le registre et les réglages d'alimentation avant/après — **à lancer dans une VM jetable**.
+
+## Accessibilité et raccourcis
+
+- **Ctrl+1 à Ctrl+6** : Tableau de bord, Réseau, Optimisation, Services, Performance, Paramètres ;
+  **Ctrl+7** : Historique.
+- Navigation au clavier (Tab) avec un indicateur de focus visible ; interrupteurs de services
+  activables à la barre d'espace.
+- Noms accessibles sur les boutons à icône (barre de titre, navigation, cartes, services).
+- Aucun état n'est signalé par la seule couleur : un libellé l'accompagne (NORMAL / ÉLEVÉ /
+  CRITIQUE, ACTIVÉ / ÉCHEC…).
+- Les animations continues s'arrêtent avec « Effets visuels » ou si les animations sont
+  désactivées dans les paramètres d'accessibilité de Windows.
+
+## Architecture technique
+
+- `CompositionRoot.cs` : injection de dépendances (Microsoft.Extensions.DependencyInjection) ;
+  les onglets Réseau, Optimisation et Services sont créés à leur première ouverture.
+- `Services/Dialogs/IDialogService.cs` : les ViewModels demandent les confirmations par cette
+  interface et n'ouvrent plus de fenêtre eux-mêmes.
+- `Themes/Theme.xaml` : palette, teintes, jetons de typographie et de rayons, focus clavier ;
+  `Themes/VisualEffects.cs` pilote toutes les ombres et lueurs.
 
 ## Onglets
 - **Dashboard** — silhouette PC centrale + modules holographiques flottants (CPU/GPU/RAM/SSD/NET) + SYSTEM STATUS.
@@ -177,7 +259,7 @@ c'est du bufferbloat sur la box, pas un défaut de mesure, et AETHER le rapporte
 
 Chaque module de l'onglet **Optimization** exécute une action système réelle
 (`Services/Optimization/`). Avant toute modification, l'état précédent est écrit dans
-`%AppData%\Aether\restore.json`, y compris après un redémarrage d'AETHER. Chaque module
+`%ProgramData%\Aether\restore.json`, y compris après un redémarrage d'AETHER. Chaque module
 affiche ce qu'il a réellement fait — ou pourquoi il n'a rien pu faire.
 
 ### Utilisation : 1 carte = 1 bouton
@@ -195,7 +277,9 @@ sur ce seul module.
 - État affiché sur la carte : INACTIF · EN COURS… · **ACTIVÉ** (vert) · DÉSACTIVÉ ·
   SANS EFFET · ÉCHEC (rouge).
 - Badges : **ADMIN** (droits administrateur requis) · **PONCTUEL** (Cleanup, Storage,
-  Memory, Overlay : rien à désactiver).
+  Overlay : rien à désactiver).
+- Toute action durable demande confirmation (réglage « Confirmer les modifications durables ») ;
+  pour Startup Manager, la liste des programmes concernés est affichée.
 - Une seule exécution à la fois (les actions partagent le magasin de restauration) : les
   autres boutons sont grisés pendant ce temps.
 - **↩ TOUT DÉSACTIVER** annule d'un coup tous les modules appliqués ; **✕ ANNULER**
@@ -206,15 +290,22 @@ sur ce seul module.
 | Gaming Boost | Plan d'alimentation « Performances élevées » + mode Jeu | — | ✅ |
 | Cleanup Engine | Supprime `%TEMP%`, dumps, cache IE (+ `Windows\Temp`) — y compris ceux de l'utilisateur connecté si AETHER est élevé sous un autre compte ; épargne les fichiers de moins de 24 h, ne suit pas les jonctions | partiel | ❌ |
 | Startup Manager | Désactive les programmes tiers au démarrage (`StartupApproved`) | — | ✅ |
-| Network Accelerator | Vide le cache DNS + auto-tuning TCP sur `normal` | partiel | ✅ |
 | Storage Optimizer | `defrag /O` — TRIM sur SSD, défragmentation sur HDD | ✅ | n/a |
-| Memory Compressor | `EmptyWorkingSet` sur les processus accessibles | — | n/a |
 | Visual FX Off | Profil « meilleures performances » + transparence coupée | — | ✅ |
 | USB Power Keep | Suspension sélective USB off (AC + DC) + clés `EnhancedPowerManagementEnabled` | partiel | ✅ |
 | Game Bar Off | Game Bar + Game DVR désactivés | partiel | ✅ |
 | Overlay Scanner | **Détection seule** : recense les overlays actifs et indique où les couper | — | n/a |
-| Service Trimmer | 6 services non essentiels en démarrage manuel | ✅ | ✅ |
-| Telemetry Block | DiagTrack, dmwappushservice, tâches CEIP, `AllowTelemetry=0` | ✅ | ✅ |
+
+Modules retirés : **Memory Compressor** (`EmptyWorkingSet` provoquait ensuite des défauts de
+page et dégradait les performances) et **Network Accelerator** (`autotuninglevel=normal` est
+déjà la valeur par défaut ; le vidage DNS est dans l'onglet Network). Ce dernier reste affiché
+uniquement s'il avait été appliqué, pour pouvoir l'annuler.
+
+Modules déplacés dans l'onglet **Services** : **Service Trimmer** (profil « Services rarement
+utiles ») et **Telemetry Block** (profil « Télémétrie Windows »). Deux mécanismes modifiant les
+mêmes services avec deux journaux distincts affichaient des états contradictoires ; l'onglet
+Services montre l'état réel et les conséquences de chaque changement. Les anciennes cartes
+restent affichées si elles avaient été appliquées, le temps de les annuler.
 
 Les modules marqués **Admin** sont ignorés (et signalés comme tels) si AETHER ne tourne
 pas en administrateur ; le bandeau orange propose de relancer avec élévation.
@@ -241,7 +332,7 @@ type de démarrage viennent de `ServiceController`, et l'écriture passe par WMI
   destructif dès que l'impact dépasse « sans risque ». Une case permet de ne plus
   confirmer les services 🟢 (préférence persistée).
 - **Restauration** — chaque changement est journalisé dans
-  `%AppData%\Aether\service-changes.json` sous la forme
+  `%ProgramData%\Aether\service-changes.json` (nom de catalogue, stable d'une session à l'autre) sous la forme
   `{ServiceName, OldStartType, NewStartType, Timestamp}`. Le bouton ↩ d'une ligne et
   « TOUT RESTAURER » remettent le type de démarrage que Windows avait à l'origine — le
   premier `OldStartType` enregistré, pour qu'un aller-retour ne fasse pas perdre l'état
@@ -260,6 +351,8 @@ Bureau à distance · Divers
 | PC gaming sans Xbox | Coupe l'écosystème Xbox Live et les captures de jeu, manettes et réseau intacts |
 | Sans virtualisation | Coupe les 7 services d'intégration Hyper-V |
 | Poste isolé sans réseau | Coupe découverte réseau, partage et accès distant |
+| Services rarement utiles | Télécopie, registre à distance, mode démonstration, cartes hors connexion, partage Windows Media, téléphonie |
+| Télémétrie Windows | DiagTrack et dmwappushservice |
 
 Un profil affiche la liste complète des conséquences avant d'appliquer quoi que ce soit.
 

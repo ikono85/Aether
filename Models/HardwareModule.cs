@@ -42,7 +42,8 @@ public partial class HardwareModule : ObservableObject
         }
     }
 
-    public string HealthLabel => Health switch { 2 => "Critical", 1 => "Elevated", _ => "Healthy" };
+    /// <summary>État en toutes lettres : la couleur seule ne suffit pas (daltonisme, lecteur d'écran).</summary>
+    public string HealthLabel => Health switch { 2 => "CRITIQUE", 1 => "ÉLEVÉ", _ => "NORMAL" };
 
     partial void OnTemperatureChanged(double value)
     {

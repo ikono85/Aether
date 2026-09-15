@@ -1,7 +1,7 @@
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
+using Aether.Services.Infrastructure;
 
 namespace Aether.Services.Optimization;
 
@@ -13,22 +13,44 @@ public class GamingBoostAction : OptimizationAction
     private const string HighPerf = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
     private const string BackupKey = "gaming_boost/scheme";
 
+    private static readonly Regex GuidPattern =
+        new(@"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
+    protected override bool AllowsRegistryTarget(string hive, string subKey, string valueName) =>
+        hive == "HKCU" && subKey == @"Software\Microsoft\GameBar" && valueName == "AutoGameModeEnabled";
+
     public override ActionResult Apply(RestoreStore store, CancellationToken ct)
     {
         var previous = ActiveScheme();
         if (previous == null) return ActionResult.Failed("Plan d'alimentation actif illisible.");
 
-        if (!store.Contains(BackupKey)) store.Write(BackupKey, previous);
+        bool savedNow = false;
+        if (!store.Contains(BackupKey)) { store.Write(BackupKey, previous); savedNow = true; }
+
+        ActionResult Abort(string message)
+        {
+            // Rien n'a changé : on ne laisse pas croire que le module est appliqué.
+            if (savedNow) store.Remove(BackupKey);
+            return ActionResult.Failed(message);
+        }
 
         // Le plan « Performances élevées » est masqué sur certains PC : on le recrée au besoin.
         var (listCode, list) = Run("powercfg", "/list");
-        if (listCode != 0) return ActionResult.Failed("powercfg indisponible.");
+        if (listCode != 0) return Abort("powercfg indisponible.");
 
         if (!list.Contains(HighPerf, StringComparison.OrdinalIgnoreCase))
-            Run("powercfg", $"-duplicatescheme {HighPerf}");
+        {
+            // Sans GUID de destination, powercfg crée une copie au GUID aléatoire et
+            // l'activation de HighPerf échouerait : on impose le GUID attendu.
+            var (dupCode, dupOutput) = Run("powercfg", "-duplicatescheme", HighPerf, HighPerf);
+            if (dupCode != 0)
+                return Abort("Plan « Performances élevées » indisponible sur ce PC (fréquent sur les " +
+                             $"portables Modern Standby). {FirstLine(dupOutput)}");
+        }
 
-        var (code, output) = Run("powercfg", $"/setactive {HighPerf}");
-        if (code != 0) return ActionResult.Failed($"Activation refusée : {output.Trim()}");
+        var (code, output) = Run("powercfg", "/setactive", HighPerf);
+        if (code != 0) return Abort($"Activation refusée : {FirstLine(output)}");
+        Log.Audit($"[{Id}] Plan d'alimentation {previous} → {HighPerf}");
 
         // Mode Jeu de Windows (planification prioritaire du jeu au premier plan).
         try
@@ -36,7 +58,7 @@ public class GamingBoostAction : OptimizationAction
             SetRegistry(store, Registry.CurrentUser,
                 @"Software\Microsoft\GameBar", "AutoGameModeEnabled", 1, RegistryValueKind.DWord);
         }
-        catch { /* non bloquant */ }
+        catch (Exception ex) { Log.Warn($"[{Id}] Mode Jeu non activé.", ex); }
 
         return ActionResult.Applied("Plan « Performances élevées » actif, mode Jeu activé.");
     }
@@ -44,13 +66,22 @@ public class GamingBoostAction : OptimizationAction
     public override ActionResult Revert(RestoreStore store)
     {
         var previous = store.Read<string>(BackupKey);
-        RevertRegistry(store);
+        if (previous != null && !GuidPattern.IsMatch(previous))
+        {
+            Log.Warn($"[{Id}] Plan sauvegardé invalide rejeté : {previous}");
+            store.Remove(BackupKey);
+            previous = null;
+        }
 
-        if (string.IsNullOrWhiteSpace(previous)) return ActionResult.Skipped("Aucun plan sauvegardé.");
+        var reg = RevertRegistry(store);
 
-        var (code, output) = Run("powercfg", $"/setactive {previous}");
-        if (code != 0) return ActionResult.Failed($"Restauration refusée : {output.Trim()}");
+        if (previous is null)
+            return FinishRevert(store, reg, "Mode Jeu rétabli.", "Aucun plan sauvegardé.");
 
+        var (code, output) = Run("powercfg", "/setactive", previous);
+        if (code != 0) return ActionResult.Failed($"Restauration refusée : {FirstLine(output)}");
+
+        if (reg.Failed > 0) return FinishRevert(store, reg, "", "");
         store.Clear(Id);
         return ActionResult.Reverted("Plan d'alimentation d'origine restauré.");
     }
@@ -183,6 +214,36 @@ public class StartupManagerAction : OptimizationAction
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
+    protected override bool AllowsRegistryTarget(string hive, string subKey, string valueName) =>
+        hive == "HKCU" && subKey == ApprovedKey;
+
+    /// <summary>
+    /// Programmes choisis par l'utilisateur pour la prochaine exécution ; null = tous les
+    /// programmes tiers (ligne de commande). Remis à null après chaque exécution.
+    /// </summary>
+    public IReadOnlyCollection<string>? SelectedEntries { get; set; }
+
+    /// <summary>Programmes qu'une activation désactiverait : listés dans la confirmation.</summary>
+    public static IReadOnlyList<string> PreviewEntries()
+    {
+        try
+        {
+            using var run = Registry.CurrentUser.OpenSubKey(RunKey);
+            if (run == null) return Array.Empty<string>();
+
+            var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            return run.GetValueNames()
+                      .Where(n => !(run.GetValue(n)?.ToString() ?? "").Contains(windows, StringComparison.OrdinalIgnoreCase))
+                      .OrderBy(n => n)
+                      .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Lecture des programmes au démarrage impossible.", ex);
+            return Array.Empty<string>();
+        }
+    }
+
     public override ActionResult Apply(RestoreStore store, CancellationToken ct)
     {
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
@@ -196,8 +257,9 @@ public class StartupManagerAction : OptimizationAction
             ct.ThrowIfCancellationRequested();
             var command = run.GetValue(name)?.ToString() ?? "";
 
-            // On ne touche jamais aux composants Windows.
+            // On ne touche jamais aux composants Windows, ni aux programmes que l'utilisateur a gardés.
             if (command.Contains(windows, StringComparison.OrdinalIgnoreCase)) { kept++; continue; }
+            if (SelectedEntries is { } selected && !selected.Contains(name)) { kept++; continue; }
 
             try
             {
@@ -207,64 +269,53 @@ public class StartupManagerAction : OptimizationAction
                 SetRegistry(store, Registry.CurrentUser, ApprovedKey, name, payload, RegistryValueKind.Binary);
                 disabled++;
             }
-            catch { kept++; }
+            catch (Exception ex)
+            {
+                Log.Warn($"[{Id}] Entrée « {name} » non désactivée.", ex);
+                kept++;
+            }
         }
 
         return disabled == 0
-            ? ActionResult.Skipped($"Rien à désactiver ({kept} entrée(s) système conservée(s)).")
+            ? ActionResult.Skipped($"Rien à désactiver ({kept} entrée(s) conservée(s)).")
             : ActionResult.Applied($"{disabled} programme(s) tiers désactivé(s) au démarrage.");
     }
 
     public override ActionResult Revert(RestoreStore store)
     {
-        int n = RevertRegistry(store);
-        store.Clear(Id);
-        return n == 0 ? ActionResult.Skipped("Aucune entrée à réactiver.")
-                      : ActionResult.Reverted($"{n} programme(s) réactivé(s) au démarrage.");
+        var reg = RevertRegistry(store);
+        return FinishRevert(store, reg, $"{reg.Restored} programme(s) réactivé(s) au démarrage.",
+                            "Aucune entrée à réactiver.");
     }
 }
 
-/// <summary>Vide le cache DNS et remet l'auto-tuning TCP sur sa valeur recommandée.</summary>
+/// <summary>
+/// Ancien module « Network Accelerator », RETIRÉ : « normal » est déjà la valeur par défaut de
+/// Windows et le vidage du cache DNS existe dans la boîte à outils réseau. La classe est gardée
+/// uniquement pour annuler une application faite par une version précédente.
+/// </summary>
 public class NetworkAcceleratorAction : OptimizationAction
 {
     public override string Id => "network";
     private const string BackupKey = "network/autotuning";
 
-    public override ActionResult Apply(RestoreStore store, CancellationToken ct)
-    {
-        var done = new List<string>();
-
-        var (dnsCode, _) = Run("ipconfig", "/flushdns");
-        if (dnsCode == 0) done.Add("cache DNS vidé");
-
-        if (IsElevated)
-        {
-            if (!store.Contains(BackupKey))
-            {
-                var current = AutoTuningLevel();
-                if (current != null) store.Write(BackupKey, current);
-            }
-
-            var (code, output) = Run("netsh", "int tcp set global autotuninglevel=normal");
-            done.Add(code == 0 ? "auto-tuning TCP sur « normal »" : $"TCP inchangé ({output.Trim()})");
-        }
-        else
-        {
-            done.Add("réglage TCP ignoré (droits administrateur requis)");
-        }
-
-        return done.Count == 0
-            ? ActionResult.Failed("Aucune opération réseau n'a abouti.")
-            : ActionResult.Applied(string.Join(", ", done) + ".");
-    }
+    public override ActionResult Apply(RestoreStore store, CancellationToken ct) =>
+        ActionResult.Skipped("Module retiré : utilisez « Vider le cache DNS » dans l'onglet Network.");
 
     public override ActionResult Revert(RestoreStore store)
     {
         var previous = store.Read<string>(BackupKey);
         if (string.IsNullOrWhiteSpace(previous)) return ActionResult.Skipped("Aucun réglage TCP à restaurer.");
 
-        var (code, output) = Run("netsh", $"int tcp set global autotuninglevel={previous}");
-        if (code != 0) return ActionResult.Failed($"Restauration refusée : {output.Trim()}");
+        if (!Levels.Contains(previous))
+        {
+            Log.Warn($"[{Id}] Niveau d'auto-tuning sauvegardé invalide rejeté : {previous}");
+            store.Clear(Id);
+            return ActionResult.Skipped("Sauvegarde TCP invalide ignorée.");
+        }
+
+        var (code, output) = Run("netsh", "int", "tcp", "set", "global", $"autotuninglevel={previous}");
+        if (code != 0) return ActionResult.Failed($"Restauration refusée : {FirstLine(output)}");
 
         store.Clear(Id);
         return ActionResult.Reverted($"Auto-tuning TCP remis sur « {previous} ».");
@@ -272,20 +323,6 @@ public class NetworkAcceleratorAction : OptimizationAction
 
     private static readonly string[] Levels =
         { "disabled", "highlyrestricted", "restricted", "normal", "experimental" };
-
-    /// <summary>
-    /// Lit le niveau d'auto-tuning actuel. On interroge Get-NetTCPSetting plutôt que netsh :
-    /// le nom de propriété est identique dans toutes les langues, alors que la sortie de netsh
-    /// est traduite et mêle plusieurs réglages ayant les mêmes valeurs (« disabled »…).
-    /// </summary>
-    private static string? AutoTuningLevel()
-    {
-        var (code, output) = Run("powershell",
-            "-NoProfile -Command \"(Get-NetTCPSetting -SettingName Internet).AutoTuningLevelLocal\"", 20_000);
-
-        var value = output.Trim().ToLowerInvariant();
-        return code == 0 && Levels.Contains(value) ? value : null;
-    }
 }
 
 /// <summary>Lance l'entretien adapté au disque système : TRIM sur SSD, défragmentation sur HDD.</summary>
@@ -301,10 +338,11 @@ public class StorageOptimizerAction : OptimizationAction
         var drive = Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\') ?? "C:";
 
         // /O applique l'opération correcte selon le média : TRIM sur SSD, défragmentation sur HDD.
-        var (code, output) = Run("defrag", $"{drive} /O /H", timeoutMs: 15 * 60_000);
+        // Le jeton d'annulation est transmis : « Annuler » interrompt réellement defrag.
+        var (code, output) = RunWithTimeout(15 * 60_000, ct, "defrag", drive, "/O", "/H");
 
         return code != 0
-            ? ActionResult.Failed($"Entretien interrompu : {First(output)}")
+            ? ActionResult.Failed($"Entretien interrompu : {FirstLine(output)}")
             : ActionResult.Applied($"Entretien de {drive} terminé ({MediaType()}).");
     }
 
@@ -313,55 +351,10 @@ public class StorageOptimizerAction : OptimizationAction
 
     private static string MediaType()
     {
-        var (code, output) = Run("powershell",
-            "-NoProfile -Command \"(Get-PhysicalDisk | Select-Object -First 1).MediaType\"", 20_000);
+        var (code, output) = RunWithTimeout(20_000, CancellationToken.None, "powershell",
+            "-NoProfile", "-NonInteractive", "-Command", "(Get-PhysicalDisk | Select-Object -First 1).MediaType");
         var t = output.Trim();
         return code == 0 && t.Length > 0 ? t : "type de disque inconnu";
     }
-
-    private static string First(string s) =>
-        s.Split('\n').FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? "erreur inconnue";
 }
 
-/// <summary>Vide le jeu de travail des processus accessibles pour rendre de la RAM au système.</summary>
-public class MemoryCompressorAction : OptimizationAction
-{
-    public override string Id => "memory";
-
-    [DllImport("psapi.dll", SetLastError = true)]
-    private static extern bool EmptyWorkingSet(IntPtr hProcess);
-
-    public override ActionResult Apply(RestoreStore store, CancellationToken ct)
-    {
-        long before = 0, after = 0;
-        int trimmed = 0;
-
-        foreach (var p in System.Diagnostics.Process.GetProcesses())
-        {
-            ct.ThrowIfCancellationRequested();
-            using (p)
-            {
-                try
-                {
-                    long ws = p.WorkingSet64;
-                    if (ws <= 0) continue;
-                    before += ws;
-
-                    if (EmptyWorkingSet(p.Handle)) trimmed++;
-
-                    p.Refresh();
-                    after += p.WorkingSet64;
-                }
-                catch { /* processus protégé ou terminé entre-temps */ }
-            }
-        }
-
-        long freed = Math.Max(0, before - after);
-        return trimmed == 0
-            ? ActionResult.Skipped("Aucun processus n'a pu être compacté.")
-            : ActionResult.Applied($"{trimmed} processus compacté(s), {freed / 1_048_576.0:0} Mo rendus au système.");
-    }
-
-    public override ActionResult Revert(RestoreStore store) =>
-        ActionResult.Skipped("Compactage mémoire : Windows recharge les pages à la demande.");
-}

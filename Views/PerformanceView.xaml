@@ -121,9 +121,9 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <StackPanel Orientation="Horizontal">
-                    <Ellipse Width="9" Height="9" Fill="#FF2BE8A4" VerticalAlignment="Center" />
+                    <Ellipse Width="9" Height="9" Fill="{StaticResource AccentOptimalBrush}" VerticalAlignment="Center" />
                     <TextBlock Text="CPU" Style="{StaticResource LabelText}" Margin="8,0,20,0" VerticalAlignment="Center" />
-                    <Ellipse Width="9" Height="9" Fill="#FF9B6BFF" VerticalAlignment="Center" />
+                    <Ellipse Width="9" Height="9" Fill="{StaticResource AccentAiBrush}" VerticalAlignment="Center" />
                     <TextBlock Text="GPU" Style="{StaticResource LabelText}" Margin="8,0,0,0" VerticalAlignment="Center" />
                 </StackPanel>
 
@@ -133,14 +133,10 @@
                         <Rectangle Height="1" Fill="#10FFFFFF" VerticalAlignment="Top" />
                         <Rectangle Height="1" Fill="#10FFFFFF" VerticalAlignment="Center" />
                         <Rectangle Height="1" Fill="#10FFFFFF" VerticalAlignment="Bottom" />
-                        <Polyline Points="{Binding GpuPoints}" Stroke="#FF9B6BFF" StrokeThickness="2"
+                        <Polyline Points="{Binding GpuPoints}" Stroke="{StaticResource AccentAiBrush}" StrokeThickness="2"
                                   StrokeLineJoin="Round" />
-                        <Polyline Points="{Binding CpuPoints}" Stroke="#FF2BE8A4" StrokeThickness="2"
-                                  StrokeLineJoin="Round">
-                            <Polyline.Effect>
-                                <DropShadowEffect BlurRadius="10" ShadowDepth="0" Color="#2BE8A4" Opacity="0.8" />
-                            </Polyline.Effect>
-                        </Polyline>
+                        <Polyline Points="{Binding CpuPoints}" Stroke="{StaticResource AccentOptimalBrush}" StrokeThickness="2"
+                                  StrokeLineJoin="Round" Effect="{DynamicResource GlowLineEffect}" />
                     </Grid>
                 </Viewbox>
             </Grid>

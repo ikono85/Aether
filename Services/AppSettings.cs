@@ -46,6 +46,16 @@ public class AppSettings
     // --- Sécurité ---
     /// <summary>Demande une confirmation avant toute optimisation irréversible sans point de restauration.</summary>
     public bool ConfirmRiskyActions { get; set; } = true;
+    /// <summary>Point de restauration Windows avant la première modification durable de la session.</summary>
+    public bool CreateRestorePoint { get; set; } = true;
+
+    // --- Mises à jour ---
+    /// <summary>Désactivé par défaut : interroge GitHub, donc proposé explicitement à l'accueil.</summary>
+    public bool CheckForUpdates { get; set; }
+    public DateTime LastUpdateCheckUtc { get; set; }
+
+    // --- Accueil ---
+    public bool OnboardingCompleted { get; set; }
 
     private static string Dir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Aether");
@@ -57,10 +67,23 @@ public class AppSettings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings();
+                return (JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings()).Normalized();
         }
         catch { /* fichier corrompu : on repart des valeurs par défaut */ }
         return new AppSettings();
+    }
+
+    /// <summary>
+    /// Ramène chaque valeur numérique dans la plage de son curseur. Un fichier modifié à la main
+    /// (seuil d'alerte à 0 °C, échelle à 5 %) ne doit pas rendre l'application inutilisable.
+    /// </summary>
+    public AppSettings Normalized()
+    {
+        SampleIntervalMs = Math.Clamp(SampleIntervalMs, 250, 5000);
+        UiScale = Math.Clamp(UiScale, 80, 150);
+        ThermalComfortC = Math.Clamp(ThermalComfortC, 45, 85);
+        AlertTempC = Math.Clamp(AlertTempC, 60, 100);
+        return this;
     }
 
     public void Save()

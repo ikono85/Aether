@@ -1,11 +1,12 @@
 using System.Collections.ObjectModel;
 using System.ServiceProcess;
-using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Aether.Models;
+using Aether.Services.Dialogs;
+using Aether.Services.History;
+using Aether.Services.Infrastructure;
 using Aether.Services.WindowsServices;
-using Aether.Views;
 
 namespace Aether.ViewModels;
 
@@ -31,8 +32,13 @@ public record ServiceProfile(string Name, string Description, string[] ServiceNa
 /// </summary>
 public partial class WindowsServicesOptimizationViewModel : ObservableObject
 {
+    private const string AdminRequired = "Droits administrateur requis.";
+
     private readonly WindowsServiceManager _manager;
-    private readonly ServiceChangeLog _log = new();
+    private readonly IDialogService _dialogs;
+    private readonly ServiceChangeLog _log;
+    private readonly RestorePointService _restorePoints;
+    private readonly ChangeHistoryService _history;
     private readonly ServicePreferences _prefs = ServicePreferences.Load();
 
     public ObservableCollection<ServiceCategoryGroup> Categories { get; } = new();
@@ -52,15 +58,21 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
             "Coupe le partage réseau, la découverte d'appareils et l'accès distant sur un poste autonome.",
             new[] { "FDResPub", "SSDPSRV", "upnphost", "lmhosts", "RemoteRegistry",
                     "TermService", "SessionEnv", "UmRdpService" }),
+
+        // Reprend l'ancien module « Service Trimmer » de l'onglet Optimisation.
+        new ServiceProfile("Services rarement utiles",
+            "Télécopie, registre à distance, mode démonstration, cartes hors connexion, partage Windows Media et téléphonie.",
+            new[] { "Fax", "RemoteRegistry", "RetailDemo", "MapsBroker", "WMPNetworkSvc", "PhoneSvc" }),
+
+        // Reprend l'ancien module « Telemetry Block » : ici, chaque conséquence est affichée.
+        new ServiceProfile("Télémétrie Windows",
+            "Coupe les services de collecte de données de diagnostic (DiagTrack) et de routage WAP Push.",
+            new[] { "DiagTrack", "dmwappushservice" }),
     };
 
     [ObservableProperty] private bool _isLoading = true;
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _status = "Lecture de l'état des services…";
-
-    public bool IsElevated => _manager.IsElevated;
-    public bool NeedsElevation => !_manager.IsElevated;
-    public string ElevationMessage => WindowsServiceManager.ElevationMessage;
 
     /// <summary>Rappel affiché en permanence : ces désactivations ne sont pas un gain de performance.</summary>
     public string InfoBanner =>
@@ -71,11 +83,20 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
 
     public bool CanRestoreAll => _log.ChangedServices().Count > 0;
 
-    public WindowsServicesOptimizationViewModel() : this(new WindowsServiceManager()) { }
-
-    public WindowsServicesOptimizationViewModel(WindowsServiceManager manager)
+    public WindowsServicesOptimizationViewModel(WindowsServiceManager manager, IDialogService dialogs,
+                                                ServiceChangeLog log, RestorePointService restorePoints,
+                                                ChangeHistoryService history)
     {
         _manager = manager;
+        _dialogs = dialogs;
+        _log = log;
+        _restorePoints = restorePoints;
+        _history = history;
+
+        // Restauration depuis l'onglet Historique : les lignes partagent les objets du catalogue,
+        // seul le bouton « Tout restaurer » est à réévaluer.
+        _history.Changed += () => OnPropertyChanged(nameof(CanRestoreAll));
+
         _ = LoadAsync();
     }
 
@@ -124,6 +145,8 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
             ? $"{total} service(s) présent(s) sur ce PC · {hidden} absent(s) de cette édition de Windows."
             : $"{total} service(s) présent(s) sur ce PC.";
 
+        if (_log.LoadError is { } logError) Status = logError;
+
         IsLoading = false;
         OnPropertyChanged(nameof(CanRestoreAll));
     }
@@ -145,41 +168,42 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
 
         if (!_manager.IsElevated)
         {
-            service.Error = "Droits administrateur requis.";
+            service.Error = AdminRequired;
             return;
         }
 
         bool disabling = service.IsEnabled;
 
         if (disabling && !await ConfirmDisable(service)) return;   // toggle inchangé
+        if (disabling && !await _restorePoints.EnsureBeforeChangeAsync(_dialogs, s => Status = s)) return;
 
         var target = disabling
             ? ServiceStartMode.Disabled
-            : _log.OriginalStartType(service.ResolvedName) ?? service.DefaultStartType;
+            : _log.OriginalStartType(service.ServiceName) ?? service.DefaultStartType;
 
         await ApplyStartType(service, target, stopAfter: disabling);
     }
 
     /// <summary>Ouvre la confirmation, sauf pour un service sans risque déjà acquitté.</summary>
-    private async Task<bool> ConfirmDisable(WindowsServiceInfo service)
+    private Task<bool> ConfirmDisable(WindowsServiceInfo service)
     {
-        if (service.ImpactLevel == ImpactLevel.Safe && _prefs.SkipConfirmationForSafe) return true;
+        if (service.ImpactLevel == ImpactLevel.Safe && _prefs.SkipConfirmationForSafe) return Task.FromResult(true);
 
-        var dialog = ServiceConfirmationDialog.ForService(service, Application.Current?.MainWindow);
-        bool confirmed = dialog.ShowDialog() == true;
-
-        if (confirmed && dialog.DontAskAgain)
+        var answer = _dialogs.ConfirmServiceDisable(service);
+        if (answer.DontAskAgain)
         {
             _prefs.SkipConfirmationForSafe = true;
             _prefs.Save();
         }
 
-        await Task.CompletedTask;
-        return confirmed;
+        return Task.FromResult(answer.Confirmed);
     }
 
-    /// <summary>Applique un type de démarrage, journalise le changement et rafraîchit la ligne.</summary>
-    private async Task ApplyStartType(WindowsServiceInfo service, ServiceStartMode target, bool stopAfter)
+    /// <summary>
+    /// Applique un type de démarrage, journalise le changement et rafraîchit la ligne.
+    /// Retourne vrai si le type de démarrage a réellement été modifié.
+    /// </summary>
+    private async Task<bool> ApplyStartType(WindowsServiceInfo service, ServiceStartMode target, bool stopAfter)
     {
         service.IsBusy = true;
         service.Error = "";
@@ -187,16 +211,30 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
 
         try
         {
+            // Journalisé AVANT le changement, sous le nom de catalogue : si le journal ne peut
+            // pas être écrit, rien n'est modifié — l'état d'origine ne peut donc jamais se perdre.
+            ServiceChangeEntry entry;
+            try { entry = _log.Record(service.ServiceName, previous, target); }
+            catch (Exception ex)
+            {
+                Log.Error($"Journal des services indisponible ({service.ServiceName}).", ex);
+                service.Error = $"Journal des changements indisponible : {ex.Message}";
+                Status = $"{service.DisplayName} — rien n'a été modifié.";
+                return false;
+            }
+
             var result = await _manager.SetStartTypeAsync(
                 service.ResolvedName, target, service.IsPerUserService);
             if (!result.Success)
             {
+                _log.Discard(entry);
+                Log.Warn($"Service {service.ResolvedName} : {previous} → {target} refusé ({result.Message}).");
                 service.Error = result.Message;
                 Status = $"{service.DisplayName} — {result.Message}";
-                return;
+                return false;
             }
 
-            _log.Record(service.ResolvedName, previous, target);
+            Log.Audit($"Service {service.ResolvedName} : {previous} → {target}.");
             service.StartType = target;
 
             // Un service désactivé mais toujours en cours le reste jusqu'au redémarrage :
@@ -224,11 +262,19 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
 
             Status = $"{service.DisplayName} — {service.StartTypeText.ToLowerInvariant()}"
                    + (result.Message.Length > 0 ? $" ({result.Message})" : "");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Changement du service {service.ResolvedName} interrompu.", ex);
+            service.Error = ex.Message;
+            return false;
         }
         finally
         {
             service.IsBusy = false;
             OnPropertyChanged(nameof(CanRestoreAll));
+            _history.NotifyChanged();
         }
     }
 
@@ -239,16 +285,19 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
     {
         if (service is null || !_manager.IsElevated) return;
 
-        var target = _log.OriginalStartType(service.ResolvedName) ?? service.DefaultStartType;
-        await ApplyStartType(service, target, stopAfter: false);
-        _log.Forget(service.ResolvedName);
+        var target = _log.OriginalStartType(service.ServiceName) ?? service.DefaultStartType;
+
+        // L'historique n'est oublié qu'une fois la restauration réellement appliquée.
+        if (await ApplyStartType(service, target, stopAfter: false))
+            _log.Forget(service.ServiceName);
         OnPropertyChanged(nameof(CanRestoreAll));
+        _history.NotifyChanged();
     }
 
     [RelayCommand]
     private async Task RestoreAll()
     {
-        if (!_manager.IsElevated) { Status = ElevationMessage; return; }
+        if (!_manager.IsElevated) { Status = AdminRequired; return; }
 
         var changed = _log.ChangedServices();
         if (changed.Count == 0) { Status = "Aucun service modifié par AETHER."; return; }
@@ -256,26 +305,34 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
         IsBusy = true;
         try
         {
+            // Index par nom de catalogue : stable d'une session à l'autre, contrairement au nom résolu.
             var index = Categories.SelectMany(c => c.Services)
-                                  .ToDictionary(s => s.ResolvedName, StringComparer.OrdinalIgnoreCase);
-            int restored = 0;
+                                  .ToDictionary(s => s.ServiceName, StringComparer.OrdinalIgnoreCase);
+            int restored = 0, failed = 0, absent = 0;
 
             foreach (var name in changed)
             {
-                if (!index.TryGetValue(name, out var service)) continue;
+                if (!index.TryGetValue(name, out var service)) { absent++; continue; }
 
                 var target = _log.OriginalStartType(name) ?? service.DefaultStartType;
-                await ApplyStartType(service, target, stopAfter: false);
-                _log.Forget(name);
-                restored++;
+                if (await ApplyStartType(service, target, stopAfter: false))
+                {
+                    _log.Forget(name);
+                    restored++;
+                }
+                else failed++;
             }
 
-            Status = $"{restored} service(s) remis dans leur état d'origine.";
+            var parts = new List<string> { $"{restored} service(s) remis dans leur état d'origine" };
+            if (failed > 0) parts.Add($"{failed} en échec (historique conservé)");
+            if (absent > 0) parts.Add($"{absent} absent(s) de ce PC");
+            Status = string.Join(" · ", parts) + ".";
         }
         finally
         {
             IsBusy = false;
             OnPropertyChanged(nameof(CanRestoreAll));
+            _history.NotifyChanged();
         }
     }
 
@@ -286,7 +343,7 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
     {
         if (profile is null || IsBusy) return;
 
-        if (!_manager.IsElevated) { Status = ElevationMessage; return; }
+        if (!_manager.IsElevated) { Status = AdminRequired; return; }
 
         var index = Categories.SelectMany(c => c.Services).ToList();
 
@@ -306,12 +363,13 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
         var worst = targets.Max(s => s.ImpactLevel);
         var consequences = targets.Select(s => $"• {s.DisplayName} — {s.ConsequenceText}").ToList();
 
-        var dialog = ServiceConfirmationDialog.ForProfile(
-            profile.Name,
-            $"{profile.Description} {targets.Count} service(s) vont être désactivés sur ce PC.",
-            consequences, worst, Application.Current?.MainWindow);
+        if (!_dialogs.ConfirmProfile(
+                profile.Name,
+                $"{profile.Description} {targets.Count} service(s) vont être désactivés sur ce PC.",
+                consequences, worst))
+            return;
 
-        if (dialog.ShowDialog() != true) return;
+        if (!await _restorePoints.EnsureBeforeChangeAsync(_dialogs, s => Status = s)) return;
 
         IsBusy = true;
         try
@@ -326,15 +384,5 @@ public partial class WindowsServicesOptimizationViewModel : ObservableObject
             IsBusy = false;
             OnPropertyChanged(nameof(CanRestoreAll));
         }
-    }
-
-    /// <summary>Relance AETHER en administrateur pour débloquer l'écriture.</summary>
-    [RelayCommand]
-    private void Elevate()
-    {
-        if (Aether.Services.Optimization.OptimizationEngine.RestartElevated())
-            Application.Current.Shutdown();
-        else
-            Status = "Élévation refusée — les services restent en lecture seule.";
     }
 }

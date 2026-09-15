@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using Aether.Services.Infrastructure;
 
 namespace Aether.Services.Optimization;
 
@@ -21,7 +21,6 @@ public class OptimizationEngine
             new StartupManagerAction(),
             new NetworkAcceleratorAction(),
             new StorageOptimizerAction(),
-            new MemoryCompressorAction(),
             new VisualFxOffAction(),
             new UsbPowerKeepAction(),
             new GameBarOffAction(),
@@ -30,10 +29,34 @@ public class OptimizationEngine
             new TelemetryBlockAction(),
         }.ToDictionary(a => a.Id);
 
-    public bool IsElevated => OptimizationAction.IsElevated;
+    /// <summary>Message à afficher si le journal de restauration est inutilisable, sinon null.</summary>
+    public string? StoreError => _store.LoadError;
 
     /// <summary>Vrai si ce module a déjà été appliqué et peut être annulé.</summary>
     public bool IsApplied(string moduleId) => _store.HasBackup(moduleId);
+
+    /// <summary>Modules actuellement appliqués (onglet Historique).</summary>
+    public IReadOnlyList<string> AppliedModuleIds() => Actions.Keys.Where(IsApplied).ToList();
+
+    public async Task<ActionResult> ApplyOneAsync(string moduleId, CancellationToken ct)
+    {
+        var result = ActionResult.Skipped("Module inconnu.");
+        await RunAsync(new[] { moduleId }, new InlineProgress(p => result = p.Result), ct);
+        return result;
+    }
+
+    public async Task<ActionResult> RevertOneAsync(string moduleId)
+    {
+        var result = ActionResult.Skipped("Module inconnu.");
+        await RevertAsync(new[] { moduleId }, new InlineProgress(p => result = p.Result), CancellationToken.None);
+        return result;
+    }
+
+    /// <summary>Progression reçue immédiatement, sur le thread de l'action (sans Dispatcher).</summary>
+    private sealed class InlineProgress(Action<ModuleProgress> report) : IProgress<ModuleProgress>
+    {
+        public void Report(ModuleProgress value) => report(value);
+    }
 
     public async Task RunAsync(IEnumerable<string> moduleIds, IProgress<ModuleProgress> progress,
                                CancellationToken ct)
@@ -48,10 +71,22 @@ public class OptimizationEngine
                 var action = Actions[ids[i]];
 
                 ActionResult result;
-                try { result = action.Apply(_store, ct); }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { result = ActionResult.Failed(ex.Message); }
+                if (_store.IsReadOnly)
+                {
+                    result = ActionResult.Failed(_store.LoadError!);
+                }
+                else
+                {
+                    try { result = action.Apply(_store, ct); }
+                    catch (OperationCanceledException) { Log.Info($"[{ids[i]}] Activation annulée."); throw; }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"[{ids[i]}] Exception pendant l'activation.", ex);
+                        result = ActionResult.Failed(ex.Message);
+                    }
+                }
 
+                Log.Audit($"[{ids[i]}] Activation : {result.Outcome} — {result.Message}");
                 progress.Report(new ModuleProgress(ids[i], result, i + 1, ids.Count));
             }
         }, ct);
@@ -71,24 +106,15 @@ public class OptimizationEngine
 
                 ActionResult result;
                 try { result = action.Revert(_store); }
-                catch (Exception ex) { result = ActionResult.Failed(ex.Message); }
+                catch (Exception ex)
+                {
+                    Log.Error($"[{ids[i]}] Exception pendant la désactivation.", ex);
+                    result = ActionResult.Failed(ex.Message);
+                }
 
+                Log.Audit($"[{ids[i]}] Désactivation : {result.Outcome} — {result.Message}");
                 progress.Report(new ModuleProgress(ids[i], result, i + 1, ids.Count));
             }
         }, ct);
-    }
-
-    /// <summary>Relance AETHER avec les droits administrateur (invite UAC de Windows).</summary>
-    public static bool RestartElevated()
-    {
-        try
-        {
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrEmpty(exe)) return false;
-
-            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, Verb = "runas" });
-            return true;
-        }
-        catch { return false; }   // UAC refusé par l'utilisateur
     }
 }

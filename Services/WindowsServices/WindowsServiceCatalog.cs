@@ -304,6 +304,10 @@ public static class WindowsServiceCatalog
             "Vous ne diffusez pas votre bibliothèque multimédia vers d'autres appareils du réseau.",
             "Le partage de la bibliothèque Windows Media vers les téléviseurs et consoles du réseau cesse de fonctionner. La lecture locale n'est pas affectée.");
 
+        Add("RetailDemo", "Mode démonstration magasin", WindowsServiceCategory.Miscellaneous, ImpactLevel.Safe,
+            "Ce PC n'est pas un poste d'exposition en magasin.",
+            "Désactive le mode démonstration utilisé sur les PC d'exposition. Sans aucun effet sur un PC personnel ou professionnel.");
+
         Add("SysMain", "SysMain (SuperFetch)", WindowsServiceCategory.Miscellaneous, ImpactLevel.NotRecommended,
             "Activité disque anormalement élevée sur un ancien disque dur mécanique.",
             "À désactiver uniquement en cas de problème (activité disque élevée, ancien disque dur HDD). Sur un PC avec SSD, il est recommandé de le laisser activé.",

@@ -43,7 +43,7 @@
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-            <Setter Property="Background" Value="#2200E58F" />
+            <Setter Property="Background" Value="{StaticResource AccentOptimalSoftBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentOptimalBrush}" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -93,7 +93,8 @@
                         </StackPanel>
                         <Button Style="{StaticResource ExpandArrow}" HorizontalAlignment="Right"
                                 VerticalAlignment="Top" Command="{Binding ToggleExpandCommand}"
-                                ToolTip="Voir ce que fait cette optimisation" />
+                                ToolTip="Voir ce que fait cette optimisation"
+                                AutomationProperties.Name="{Binding Title, StringFormat=Détails : {0}}" />
                     </Grid>
                     <TextBlock Grid.Row="1" Text="{Binding Description}" TextWrapping="Wrap"
                                Margin="0,10,0,0" FontSize="12"
@@ -105,16 +106,18 @@
                                 Background="{StaticResource TextMutedBrush}" VerticalAlignment="Center" />
                         <TextBlock x:Name="st" Text="{Binding StateLabel}" Margin="8,0,0,0"
                                    Style="{StaticResource LabelText}" />
-                        <Border Margin="8,0,0,0" CornerRadius="4" Padding="5,1" Background="#22FFB347"
+                        <Border Margin="8,0,0,0" CornerRadius="{StaticResource RadiusBadge}" Padding="5,1"
+                                Background="{StaticResource AccentWarnSoftBrush}"
                                 VerticalAlignment="Center" ToolTip="Nécessite les droits administrateur"
                                 Visibility="{Binding RequiresAdmin, Converter={StaticResource BoolToVis}}">
-                            <TextBlock Text="ADMIN" FontSize="9" FontWeight="SemiBold"
+                            <TextBlock Text="ADMIN" FontSize="{StaticResource FontSizeCaption}" FontWeight="SemiBold"
                                        Foreground="{StaticResource AccentWarnBrush}" />
                         </Border>
-                        <Border Margin="6,0,0,0" CornerRadius="4" Padding="5,1" Background="#18FFFFFF"
+                        <Border Margin="6,0,0,0" CornerRadius="{StaticResource RadiusBadge}" Padding="5,1"
+                                Background="{StaticResource DividerBrush}"
                                 VerticalAlignment="Center" ToolTip="Action ponctuelle : s'exécute une fois, ne se désactive pas"
                                 Visibility="{Binding IsOneShot, Converter={StaticResource BoolToVis}}">
-                            <TextBlock Text="PONCTUEL" FontSize="9" FontWeight="SemiBold"
+                            <TextBlock Text="PONCTUEL" FontSize="{StaticResource FontSizeCaption}" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextMutedBrush}" />
                         </Border>
                     </StackPanel>
@@ -143,6 +146,7 @@
 
                     <StackPanel Grid.Row="4" Margin="0,14,0,0">
                         <Button Style="{StaticResource CardActionButton}" Content="{Binding ActionLabel}"
+                                AutomationProperties.HelpText="{Binding Title}"
                                 Command="{Binding DataContext.ToggleCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                 CommandParameter="{Binding}" />
 
@@ -163,7 +167,7 @@
                 </Trigger>
                 <DataTrigger Binding="{Binding IsActive}" Value="True">
                     <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AccentOptimalBrush}" />
-                    <Setter TargetName="bd" Property="Background" Value="#1400E58F" />
+                    <Setter TargetName="bd" Property="Background" Value="#142BE8A4" />
                     <Setter TargetName="dot" Property="Background" Value="{StaticResource AccentOptimalBrush}" />
                     <Setter TargetName="st" Property="Foreground" Value="{StaticResource AccentOptimalBrush}" />
                 </DataTrigger>
@@ -188,30 +192,10 @@
         </Grid.RowDefinitions>
 
         <StackPanel Margin="12,6,0,0">
-            <TextBlock Text="PERFORMANCE CORE" Style="{StaticResource LabelText}" />
+            <TextBlock Text="OPTIMISATION" Style="{StaticResource LabelText}" />
             <TextBlock Text="Arbre d'optimisation" Style="{StaticResource HeaderText}" Margin="0,4,0,0" />
             <TextBlock Margin="0,6,12,0" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource TextMutedBrush}"
                        Text="Chaque optimisation s'active individuellement : cliquez sur « Activer » sur la carte de votre choix, elle s'applique immédiatement. Les optimisations réversibles se désactivent avec le même bouton." />
-
-            <!-- Élévation requise par un ou plusieurs modules -->
-            <Border Margin="0,14,12,0" CornerRadius="12" Padding="16,12" Background="#1AFFB347"
-                    BorderThickness="1" BorderBrush="#40FFB347"
-                    Visibility="{Binding NeedsElevation, Converter={StaticResource BoolToVis}}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12"
-                               Foreground="{StaticResource TextPrimaryBrush}"
-                               Text="Les modules marqués ADMIN modifient le système et demandent les droits administrateur. Sans élévation, ils seront ignorés — les autres s'appliquent normalement." />
-                    <Button Grid.Column="1" Margin="16,0,0,0" Content="RELANCER EN ADMIN"
-                            Command="{Binding ElevateCommand}" VerticalAlignment="Center"
-                            Cursor="Hand" Padding="14,8" FontSize="11" FontWeight="SemiBold"
-                            Background="#33FFB347" BorderBrush="#66FFB347" BorderThickness="1"
-                            Foreground="{StaticResource TextPrimaryBrush}" />
-                </Grid>
-            </Border>
         </StackPanel>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,16,0,0">

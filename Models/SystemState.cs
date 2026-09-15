@@ -6,5 +6,5 @@ public enum SystemState
     Optimal,   // vert
     Elevated,  // orange
     Critical,  // rouge
-    Analyzing  // violet (analyse IA en cours)
+    Analyzing  // violet : aucune mesure encore disponible
 }

@@ -4,6 +4,9 @@ using System.Windows.Media.Effects;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Aether.Services;
+using Aether.Services.Dialogs;
+using Aether.Services.History;
+using Aether.Services.Infrastructure;
 
 namespace Aether.ViewModels;
 
@@ -23,9 +26,19 @@ public partial class SettingsViewModel : ObservableObject
     /// <summary>Prévient <see cref="MainViewModel"/> qu'un réglage influençant l'accent a changé.</summary>
     public event Action? AccentPolicyChanged;
 
-    public SettingsViewModel(HardwareService hw)
+    private readonly NetworkService _net;
+    private readonly IDialogService _dialogs;
+    private readonly ChangeHistoryService _history;
+    private readonly UpdateService _updates;
+
+    public SettingsViewModel(HardwareService hw, NetworkService net, IDialogService dialogs,
+                             ChangeHistoryService history, UpdateService updates)
     {
         _hw = hw;
+        _net = net;
+        _dialogs = dialogs;
+        _history = history;
+        _updates = updates;
         _store = AppSettings.Load();
 
         _loading = true;
@@ -46,11 +59,20 @@ public partial class SettingsViewModel : ObservableObject
         _alertTempC = _store.AlertTempC;
         _alertConnection = _store.AlertConnection;
         _alertNetwork = _store.AlertNetwork;
+        _createRestorePoint = _store.CreateRestorePoint;
+        _checkForUpdates = _store.CheckForUpdates;
         _loading = false;
 
         // Réapplique au démarrage ce que le fichier contenait.
         _hw.Interval = TimeSpan.FromMilliseconds(_sampleIntervalMs);
         ApplyVisualEffects(_visualEffects);
+
+        // « Afficher les animations dans Windows » peut changer pendant que l'application tourne.
+        SystemParameters.StaticPropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SystemParameters.ClientAreaAnimation))
+                OnPropertyChanged(nameof(AnimationsEnabled));
+        };
     }
 
     // ---------------------------------------------------------------- Général
@@ -109,18 +131,8 @@ public partial class SettingsViewModel : ObservableObject
     /// <summary>Diagnostic de la couche capteurs, tel que le rapporte LibreHardwareMonitor.</summary>
     public string SensorStatus => _hw.StatusMessage;
 
-    public string ElevationStatus => StartupManager.IsElevated
-        ? "Session élevée : températures et optimisations système disponibles."
-        : "Session non élevée : températures CPU/carte mère et optimisations indisponibles.";
-
-    public bool IsElevated => StartupManager.IsElevated;
-
     [RelayCommand]
-    private void RefreshDiagnostics()
-    {
-        OnPropertyChanged(nameof(SensorStatus));
-        OnPropertyChanged(nameof(ElevationStatus));
-    }
+    private void RefreshDiagnostics() => OnPropertyChanged(nameof(SensorStatus));
 
     // ---------------------------------------------------------------- Apparence
 
@@ -129,22 +141,23 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnVisualEffectsChanged(bool value)
     {
         ApplyVisualEffects(value);
+        OnPropertyChanged(nameof(AnimationsEnabled));
         _store.VisualEffects = value;
         Persist();
     }
 
     /// <summary>
-    /// Les ombres des panneaux passent par la ressource dynamique « PanelShadow ».
-    /// La remplacer par null supprime le flou sur toute l'interface d'un coup : c'est
-    /// le poste de rendu le plus coûteux sur un GPU intégré.
+    /// Toutes les ombres et lueurs passent par des ressources dynamiques : les remplacer par
+    /// null supprime le flou sur toute l'interface d'un coup — le poste de rendu le plus
+    /// coûteux sur un GPU intégré.
     /// </summary>
-    private static void ApplyVisualEffects(bool on)
-    {
-        if (Application.Current is not { } app) return;
-        app.Resources["PanelShadow"] = on
-            ? new DropShadowEffect { BlurRadius = 40, ShadowDepth = 0, Opacity = 0.55, Color = Colors.Black }
-            : null;
-    }
+    private static void ApplyVisualEffects(bool on) => Aether.Themes.VisualEffects.Apply(on);
+
+    /// <summary>
+    /// Animations continues (noyau, halo, flux réseau) : coupées avec les effets visuels, ou
+    /// quand l'utilisateur a désactivé les animations dans les paramètres d'accessibilité de Windows.
+    /// </summary>
+    public bool AnimationsEnabled => VisualEffects && SystemParameters.ClientAreaAnimation;
 
     [ObservableProperty] private bool _dynamicAccent;
 
@@ -211,6 +224,130 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _alertNetwork;
     partial void OnAlertNetworkChanged(bool value) { _store.AlertNetwork = value; Persist(); }
 
+    // ---------------------------------------------------------------- Protection
+
+    [ObservableProperty] private bool _createRestorePoint;
+    partial void OnCreateRestorePointChanged(bool value) { _store.CreateRestorePoint = value; Persist(); }
+
+    // ---------------------------------------------------------------- Accueil
+
+    public bool OnboardingCompleted => _store.OnboardingCompleted;
+
+    /// <summary>
+    /// Premier lancement : explique ce qu'AETHER fait et envoie, et recueille les choix. « Plus tard »
+    /// laisse l'écran réapparaître au prochain lancement.
+    /// </summary>
+    public void RunOnboardingIfNeeded()
+    {
+        if (_store.OnboardingCompleted) return;
+
+        var choices = _dialogs.ShowOnboarding(
+            new OnboardingChoices(CloseToTray, AlertsEnabled, CreateRestorePoint, CheckForUpdates));
+        if (choices is null) return;
+
+        CloseToTray = choices.CloseToTray;
+        AlertsEnabled = choices.AlertsEnabled;
+        CreateRestorePoint = choices.CreateRestorePoint;
+        CheckForUpdates = choices.CheckForUpdates;
+
+        _store.OnboardingCompleted = true;
+        Persist();
+    }
+
+    // ---------------------------------------------------------------- Mises à jour
+
+    [ObservableProperty] private bool _checkForUpdates;
+    partial void OnCheckForUpdatesChanged(bool value) { _store.CheckForUpdates = value; Persist(); }
+
+    [ObservableProperty] private string _updateStatus = "";
+    [ObservableProperty] private string _updateUrl = "";
+
+    public bool HasUpdate => UpdateUrl.Length > 0;
+    partial void OnUpdateUrlChanged(string value) => OnPropertyChanged(nameof(HasUpdate));
+
+    [RelayCommand]
+    private async Task CheckUpdatesNow()
+    {
+        UpdateStatus = "Vérification…";
+        var (update, message) = await _updates.CheckAsync(CancellationToken.None);
+        UpdateUrl = update?.Url ?? "";
+        UpdateStatus = message;
+    }
+
+    /// <summary>Vérification automatique : seulement si activée, et au plus une fois par jour.</summary>
+    public async Task<UpdateInfo?> CheckForUpdatesAutoAsync()
+    {
+        if (!CheckForUpdates || DateTime.UtcNow - _store.LastUpdateCheckUtc < TimeSpan.FromHours(20)) return null;
+
+        var (update, message) = await _updates.CheckAsync(CancellationToken.None);
+        _store.LastUpdateCheckUtc = DateTime.UtcNow;
+        Persist();
+        UpdateUrl = update?.Url ?? "";
+        UpdateStatus = message;
+        return update;
+    }
+
+    /// <summary>
+    /// Ouvre la page de la version via l'Explorateur : lancé directement depuis AETHER (administrateur),
+    /// le navigateur hériterait des droits administrateur.
+    /// </summary>
+    [RelayCommand]
+    private void OpenReleasePage()
+    {
+        if (!UpdateUrl.StartsWith(UpdateService.AllowedPagePrefix, StringComparison.Ordinal)) return;
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("explorer.exe") { UseShellExecute = false };
+            psi.ArgumentList.Add(UpdateUrl);
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex) { UpdateStatus = $"Ouverture impossible : {ex.Message}"; }
+    }
+
+    // ---------------------------------------------------------------- Diagnostic
+
+    [ObservableProperty] private string _diagnosticStatus = "";
+
+    public string BuildDiagnostic() => Diagnostics.BuildReport(_hw, _net);
+
+    [RelayCommand]
+    private void CopyDiagnostic()
+    {
+        try
+        {
+            Clipboard.SetText(BuildDiagnostic());
+            DiagnosticStatus = "Rapport copié dans le presse-papiers (adresses publiques, nom du PC et de l'utilisateur masqués).";
+        }
+        catch (Exception ex) { DiagnosticStatus = $"Copie impossible : {ex.Message}"; }
+    }
+
+    [RelayCommand]
+    private void ExportDiagnostic()
+    {
+        var path = _dialogs.AskSavePath("Exporter un rapport de diagnostic",
+            $"aether-diagnostic-{DateTime.Now:yyyyMMdd-HHmm}.zip", "Archive ZIP|*.zip");
+        if (path is null) return;
+
+        try
+        {
+            Diagnostics.ExportZip(path, BuildDiagnostic(), _history.ExportJson());
+            DiagnosticStatus = $"Rapport exporté : {path}. Rien n'est envoyé automatiquement.";
+        }
+        catch (Exception ex) { DiagnosticStatus = $"Export impossible : {ex.Message}"; }
+    }
+
+    /// <summary>La session précédente s'est mal terminée : propose le rapport, sans rien envoyer.</summary>
+    public void OfferDiagnosticAfterCrash(string issue)
+    {
+        var nl = Environment.NewLine;
+        if (_dialogs.Confirm("AETHER — fermeture inattendue",
+                $"{issue}{nl}{nl}Copier le rapport de diagnostic dans le presse-papiers pour le joindre à un signalement ?" +
+                $"{nl}Rien n'est envoyé automatiquement : vous choisissez à qui le transmettre."))
+            CopyDiagnostic();
+
+        Diagnostics.MarkCrashesSeen();
+    }
+
     // ---------------------------------------------------------------- Données
 
     public string DataPath => AppSettings.FilePath;
@@ -220,6 +357,20 @@ public partial class SettingsViewModel : ObservableObject
     {
         try { AppSettings.OpenDataFolder(); }
         catch (Exception ex) { StartupStatus = $"Dossier inaccessible : {ex.Message}"; }
+    }
+
+    public string LogPath => Aether.Services.Infrastructure.Log.Folder;
+
+    /// <summary>Journaux : ce qu'il faut joindre à un signalement de problème.</summary>
+    [RelayCommand]
+    private void OpenLogsFolder()
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(LogPath);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(LogPath) { UseShellExecute = true });
+        }
+        catch (Exception ex) { StartupStatus = $"Dossier des journaux inaccessible : {ex.Message}"; }
     }
 
     [RelayCommand]
@@ -243,22 +394,38 @@ public partial class SettingsViewModel : ObservableObject
         AlertTempC = d.AlertTempC;
         AlertConnection = d.AlertConnection;
         AlertNetwork = d.AlertNetwork;
+        CreateRestorePoint = d.CreateRestorePoint;
+        CheckForUpdates = d.CheckForUpdates;
         _loading = false;
 
         // Application effective des valeurs par défaut : les setters ont été court-circuités.
         _hw.Interval = TimeSpan.FromMilliseconds(d.SampleIntervalMs);
         ApplyVisualEffects(d.VisualEffects);
+        OnPropertyChanged(nameof(AnimationsEnabled));
         AccentPolicyChanged?.Invoke();
         OnPropertyChanged(nameof(Scale));
         OnPropertyChanged(nameof(ScaleLabel));
         OnPropertyChanged(nameof(IntervalLabel));
 
         d.StartWithWindows = LaunchAtStartup;
+        d.OnboardingCompleted = _store.OnboardingCompleted;   // l'accueil a déjà été vu
         d.Save();
         StartupStatus = "Réglages réinitialisés. Le démarrage automatique est inchangé.";
     }
 
-    public string Version => "AETHER OS · v1.0.0 · build 2026.08";
+    /// <summary>Version réelle de l'assemblage (définie dans Aether.csproj), et non un texte figé.</summary>
+    public string Version
+    {
+        get
+        {
+            var informational = typeof(SettingsViewModel).Assembly
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+                .FirstOrDefault()?.InformationalVersion;
+            var version = informational?.Split('+')[0] ?? "?";
+            return $"AETHER · v{version} · .NET {Environment.Version.ToString(2)}";
+        }
+    }
 
     private void Persist()
     {

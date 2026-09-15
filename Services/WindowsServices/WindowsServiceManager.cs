@@ -15,22 +15,8 @@ namespace Aether.Services.WindowsServices;
 public class WindowsServiceManager
 {
     /// <summary>Vrai si AETHER dispose des droits administrateur (obligatoires pour écrire).</summary>
-    public bool IsElevated { get; } = CheckElevation();
+    public bool IsElevated { get; } = Aether.Services.Infrastructure.Elevation.IsElevated;
 
-    private static bool CheckElevation()
-    {
-        try
-        {
-            using var id = WindowsIdentity.GetCurrent();
-            return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
-        }
-        catch { return false; }
-    }
-
-    /// <summary>Message affiché tant qu'AETHER n'est pas élevé.</summary>
-    public const string ElevationMessage =
-        "AETHER n'est pas lancé en administrateur : l'état des services est affiché en lecture seule. " +
-        "Relancez avec élévation pour pouvoir les modifier.";
 
     // ------------------------------------------------------------------ lecture
 

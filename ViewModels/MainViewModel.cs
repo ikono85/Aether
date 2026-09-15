@@ -1,9 +1,11 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Aether.Models;
 using Aether.Services;
+using Aether.Services.History;
+using Aether.Themes;
 
 namespace Aether.ViewModels;
 
@@ -13,46 +15,62 @@ public partial class MainViewModel : ObservableObject
     public NetworkService NetSvc { get; }
 
     public DashboardViewModel Dashboard { get; }
-    public NetworkViewModel Network { get; }
-    public OptimizationViewModel Optimization { get; }
-    public WindowsServicesOptimizationViewModel WindowsServices { get; }
     public PerformanceViewModel Performance { get; }
     public SettingsViewModel Settings { get; }
 
+    // Onglets créés à la première visite : l'énumération des services Windows, la table TCP
+    // ou le journal de restauration ne sont plus lus au démarrage si l'onglet n'est jamais ouvert.
+    private readonly Lazy<NetworkViewModel> _network;
+    private readonly Lazy<OptimizationViewModel> _optimization;
+    private readonly Lazy<WindowsServicesOptimizationViewModel> _windowsServices;
+    private readonly Lazy<HistoryViewModel> _historyPage;
+    private readonly MeasurementHistory _measures;
+
     [ObservableProperty] private ObservableObject _current;
     [ObservableProperty] private string _activePage = "Dashboard";
-    [ObservableProperty] private SystemState _state = SystemState.Optimal;
-    [ObservableProperty] private double _healthScore = 94;
+    [ObservableProperty] private SystemState _state = SystemState.Analyzing;
+    [ObservableProperty] private double _healthScore;
 
-    public MainViewModel()
+    public MainViewModel(HardwareService hw, NetworkService net,
+                         DashboardViewModel dashboard, PerformanceViewModel performance, SettingsViewModel settings,
+                         Lazy<NetworkViewModel> network, Lazy<OptimizationViewModel> optimization,
+                         Lazy<WindowsServicesOptimizationViewModel> windowsServices,
+                         Lazy<HistoryViewModel> history, MeasurementHistory measures)
     {
-        // NetSvc en premier : il est la source unique des mesures réseau, que HardwareService
-        // recopie pour le Dashboard au lieu de les mesurer une seconde fois.
-        NetSvc = new NetworkService();
-        Hw = new HardwareService(NetSvc);
-        Dashboard = new DashboardViewModel(Hw);
-        Network = new NetworkViewModel(NetSvc);
-        Optimization = new OptimizationViewModel();
-        WindowsServices = new WindowsServicesOptimizationViewModel();
-        Performance = new PerformanceViewModel(Hw);
-        Settings = new SettingsViewModel(Hw);
-        Settings.AccentPolicyChanged += OnAccentPolicyChanged;
+        _historyPage = history;
+        // Résolu ici pour enregistrer les relevés dès le démarrage, onglet ouvert ou non.
+        _measures = measures;
+        Hw = hw;
+        NetSvc = net;
+        Dashboard = dashboard;
+        Performance = performance;
+        Settings = settings;
+        _network = network;
+        _optimization = optimization;
+        _windowsServices = windowsServices;
 
+        Settings.AccentPolicyChanged += OnAccentPolicyChanged;
         _current = Dashboard;
+
         Hw.Updated += OnTelemetry;
+        // NetSvc est la source unique des mesures réseau (Dashboard, alertes, onglet Network).
+        NetSvc.Start();
         Hw.Start();
-        Recompute();
+        ApplyAccent(State);
     }
 
     [RelayCommand]
-    private void Navigate(string page)
+    private void Navigate(string page) => ActivePage = page;
+
+    /// <summary>Clic sur la navigation ou raccourci clavier : les deux passent par la page active.</summary>
+    partial void OnActivePageChanged(string value)
     {
-        ActivePage = page;
-        Current = page switch
+        Current = value switch
         {
-            "Network" => Network,
-            "Optimization" => Optimization,
-            "WindowsServices" => WindowsServices,
+            "Network" => _network.Value,
+            "Optimization" => _optimization.Value,
+            "WindowsServices" => _windowsServices.Value,
+            "History" => _historyPage.Value,
             "Performance" => Performance,
             "Settings" => Settings,
             _ => Dashboard
@@ -81,8 +99,12 @@ public partial class MainViewModel : ObservableObject
         Settings.AccentPolicyChanged -= OnAccentPolicyChanged;
         Hw.Updated -= OnTelemetry;
         Hw.Dispose();
+        _measures.Dispose();   // écrit les derniers relevés
         NetSvc.Stop();
     }
+
+    /// <summary>Score lissé non arrondi ; NaN tant qu'aucune mesure n'est arrivée.</summary>
+    private double _healthRaw = double.NaN;
 
     /// <summary>Calcule le score de santé global et l'état, puis diffuse la couleur d'accent.</summary>
     private void Recompute()
@@ -99,27 +121,27 @@ public partial class MainViewModel : ObservableObject
         if (thermal is not null) parts.Add((thermal.Value, 0.5));
         if (load is not null) parts.Add((load.Value, 0.5));
 
-        // Aucun capteur disponible : on conserve le dernier score connu.
-        double score = parts.Count == 0
-            ? _healthRaw
-            : Math.Clamp(parts.Sum(p => p.Value * p.Weight) / parts.Sum(p => p.Weight), 0, 100);
+        if (parts.Count == 0)
+        {
+            // Aucune mesure : on n'affiche pas un score inventé.
+            if (double.IsNaN(_healthRaw)) SetState(SystemState.Analyzing);
+            return;
+        }
 
-        // Lissage conservé en interne en virgule flottante : arrondir ici bloquerait le
-        // score dès que l'écart avec la cible devient inférieur à un point.
-        _healthRaw += (score - _healthRaw) * 0.25;
+        double score = Math.Clamp(parts.Sum(p => p.Value * p.Weight) / parts.Sum(p => p.Weight), 0, 100);
+
+        // Première mesure prise telle quelle ; ensuite lissage en virgule flottante (arrondir
+        // ici bloquerait le score dès que l'écart avec la cible devient inférieur à un point).
+        _healthRaw = double.IsNaN(_healthRaw) ? score : _healthRaw + (score - _healthRaw) * 0.25;
         HealthScore = Math.Round(_healthRaw);
 
-        SystemState s = HealthScore switch
+        SetState(HealthScore switch
         {
             < 55 => SystemState.Critical,
             < 78 => SystemState.Elevated,
             _ => SystemState.Optimal
-        };
-        SetState(s);
+        });
     }
-
-    /// <summary>Score lissé non arrondi (voir <see cref="Recompute"/>).</summary>
-    private double _healthRaw = 94;
 
     /// <summary>Plus grande valeur mesurée, null si aucun capteur ne répond.</summary>
     private static double? Best(params double[] values)
@@ -128,9 +150,7 @@ public partial class MainViewModel : ObservableObject
         return known.Count == 0 ? null : known.Max();
     }
 
-    /// <summary>
-    /// Charge globale pondérée CPU/GPU/RAM, calculée sur les seules mesures disponibles.
-    /// </summary>
+    /// <summary>Charge globale pondérée CPU/GPU/RAM, calculée sur les seules mesures disponibles.</summary>
     private double? WeightedLoad()
     {
         var parts = new List<(double Value, double Weight)>();
@@ -156,7 +176,7 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     private void ApplyAccent(SystemState s)
     {
-        if (!Settings.DynamicAccent) s = SystemState.Optimal;
+        if (!Settings.DynamicAccent && s != SystemState.Analyzing) s = SystemState.Optimal;
 
         var key = s switch
         {
@@ -170,6 +190,7 @@ public partial class MainViewModel : ObservableObject
         {
             // pinceau figé -> on remplace la ressource
             Application.Current.Resources["AccentBrush"] = new SolidColorBrush(col);
+            VisualEffects.SetCoreColor(col);
         }
     }
 
@@ -177,9 +198,37 @@ public partial class MainViewModel : ObservableObject
     {
         SystemState.Critical => "PROBLÈME DÉTECTÉ",
         SystemState.Elevated => "CHARGE ÉLEVÉE",
-        SystemState.Analyzing => "ANALYSE IA",
+        SystemState.Analyzing => "MESURE EN COURS",
         _ => "SYSTÈME OPTIMAL"
     };
 
-    partial void OnStateChanged(SystemState value) => OnPropertyChanged(nameof(StateLabel));
+    /// <summary>Phrase d'état du Dashboard, dérivée des mesures (et non un texte figé rassurant).</summary>
+    public string StateDescription => State switch
+    {
+        SystemState.Critical => "Une température ou une charge dépasse nettement les seuils : consultez l'onglet Performance.",
+        SystemState.Elevated => "Charge ou température élevée, sans situation critique.",
+        SystemState.Analyzing => "Aucune mesure matérielle disponible pour l'instant.",
+        _ => "Aucune mesure ne dépasse les seuils de santé."
+    };
+
+    /// <summary>« — » tant qu'aucune mesure n'a permis de calculer le score.</summary>
+    public string HealthText => State == SystemState.Analyzing ? "—" : $"{HealthScore:0}";
+
+    public string HealthAccessibleText => State == SystemState.Analyzing
+        ? "Score de santé : mesure en cours"
+        : $"Score de santé : {HealthScore:0} %, {StateLabel.ToLowerInvariant()}";
+
+    partial void OnStateChanged(SystemState value)
+    {
+        OnPropertyChanged(nameof(StateLabel));
+        OnPropertyChanged(nameof(StateDescription));
+        OnPropertyChanged(nameof(HealthText));
+        OnPropertyChanged(nameof(HealthAccessibleText));
+    }
+
+    partial void OnHealthScoreChanged(double value)
+    {
+        OnPropertyChanged(nameof(HealthText));
+        OnPropertyChanged(nameof(HealthAccessibleText));
+    }
 }

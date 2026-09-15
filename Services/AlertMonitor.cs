@@ -112,6 +112,9 @@ public sealed class AlertMonitor : IDisposable
     /// </summary>
     private void CheckOutage()
     {
+        // Changement de réseau ou sortie de veille : la connexion se rétablit, ce n'est pas une panne.
+        if (_net.InGracePeriod && !_connectionDown) { _downStreak = 0; return; }
+
         var references = new[] { _net.Gateway, _net.Cdn, _net.Cloud }.Where(n => n.EverAnswered).ToList();
         if (references.Count == 0) return;
 
@@ -153,6 +156,13 @@ public sealed class AlertMonitor : IDisposable
     /// </summary>
     private void CheckVerdict()
     {
+        if (_net.InGracePeriod)
+        {
+            _badVerdictStreak = 0;
+            _verdictSeverity = Math.Min(_verdictSeverity, 1);
+            return;
+        }
+
         var verdict = NetworkDiagnosis.Evaluate(_net);
         _verdictSeverity = verdict.Severity;
 

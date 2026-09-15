@@ -6,18 +6,23 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Aether.Models;
 using Aether.Services;
+using Aether.Services.Dialogs;
+using Aether.Services.History;
+using Aether.Services.Infrastructure;
 
 namespace Aether.ViewModels;
 
 public partial class NetworkViewModel : ObservableObject
 {
     private readonly NetworkService _net;
-    private readonly ConnectionService _connections = new();
-    private readonly SpeedTestService _speed = new();
+    private readonly ConnectionService _connections;
+    private readonly SpeedTestService _speed;
+    private readonly IDialogService _dialogs;
+    private readonly ChangeHistoryService _history;
 
     /// <summary>
     /// Rafraîchissement de la table TCP. Séparé du timer de <see cref="NetworkService"/> :
-    /// la lecture est locale et instantanée, elle n'a pas à attendre le cycle des pings.
+    /// la lecture est locale, elle n'a pas à attendre le cycle des pings.
     /// </summary>
     private readonly DispatcherTimer _connTimer;
 
@@ -42,9 +47,15 @@ public partial class NetworkViewModel : ObservableObject
     [ObservableProperty] private double _upload;
     [ObservableProperty] private double _packetLoss;
 
-    public NetworkViewModel(NetworkService net)
+    /// <summary>Créé à la première ouverture de l'onglet ; NetworkService tourne déjà depuis le démarrage.</summary>
+    public NetworkViewModel(NetworkService net, ConnectionService connections, SpeedTestService speed,
+                            IDialogService dialogs, ChangeHistoryService history)
     {
         _net = net;
+        _connections = connections;
+        _speed = speed;
+        _dialogs = dialogs;
+        _history = history;
         net.Updated += Refresh;
 
         ConnectionsView = CollectionViewSource.GetDefaultView(_connections.Connections);
@@ -53,20 +64,22 @@ public partial class NetworkViewModel : ObservableObject
             new SortDescription(nameof(ActiveConnection.ProcessName), ListSortDirection.Ascending));
 
         _connTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-        _connTimer.Tick += (_, _) => RefreshConnections();
+        _connTimer.Tick += async (_, _) => await SafeRefreshConnections();
 
-        _speed.Progress += (pct, label) => Application.Current?.Dispatcher.Invoke(() =>
+        // Levé depuis un thread de fond, déjà limité à 10 Hz : BeginInvoke ne bloque jamais la mesure.
+        _speed.Progress += (pct, label) => Application.Current?.Dispatcher.BeginInvoke(() =>
         {
             SpeedProgress = pct;
             SpeedStatus = label;
         });
 
-        net.Start();
+        // Relevés déjà effectués avant l'ouverture de l'onglet : affichés immédiatement.
+        Refresh();
     }
 
     // ------------------------------------------------------------------ Sections
 
-    /// <summary>« Map », « Connections » ou « Route ». Pilote l'affichage des trois panneaux.</summary>
+    /// <summary>« Map », « Connections », « Route » ou « Tools ». Pilote l'affichage des panneaux.</summary>
     [ObservableProperty] private string _section = "Map";
 
     partial void OnSectionChanged(string value)
@@ -78,7 +91,7 @@ public partial class NetworkViewModel : ObservableObject
 
         // La table TCP n'est relue que lorsqu'elle est visible : inutile d'énumérer les
         // processus toutes les 3 s pendant que l'utilisateur regarde la cartographie.
-        if (value == "Connections") { RefreshConnections(); _connTimer.Start(); }
+        if (value == "Connections") { _ = SafeRefreshConnections(); _connTimer.Start(); }
         else _connTimer.Stop();
     }
 
@@ -98,11 +111,12 @@ public partial class NetworkViewModel : ObservableObject
 
     [ObservableProperty] private DnsCandidate? _selectedDns;
 
-    public bool HasDnsBackup => NetworkToolbox.HasDnsBackup();
+    /// <summary>Le DNS de l'interface ACTIVE a-t-il été modifié par AETHER ?</summary>
+    public bool HasDnsBackup => NetworkToolbox.HasDnsBackup(_net.InterfaceId, _net.InterfaceName);
 
-    private static bool Ask(string title, string message) =>
-        MessageBox.Show(message, $"AETHER — {title}", MessageBoxButton.OKCancel, MessageBoxImage.Warning)
-        == MessageBoxResult.OK;
+    private string _lastInterfaceId = "";
+
+    private bool Ask(string title, string message) => _dialogs.Confirm($"AETHER — {title}", message);
 
     /// <summary>Encadre une action : verrou, statut, puis relecture de la topologie si elle a pu changer.</summary>
     private async Task RunTool(Func<Task<string>> action, bool rediscover)
@@ -115,11 +129,16 @@ public partial class NetworkViewModel : ObservableObject
             ToolStatus = await action();
             if (rediscover) await _net.RediscoverAsync();
         }
-        catch (Exception ex) { ToolStatus = $"Erreur : {ex.Message}"; }
+        catch (Exception ex)
+        {
+            Log.Error("Action de la boîte à outils réseau interrompue.", ex);
+            ToolStatus = $"Erreur : {ex.Message}";
+        }
         finally
         {
             IsToolBusy = false;
             OnPropertyChanged(nameof(HasDnsBackup));
+            _history.NotifyChanged();   // un changement de DNS apparaît dans l'onglet Historique
         }
     }
 
@@ -158,7 +177,7 @@ public partial class NetworkViewModel : ObservableObject
         try
         {
             var results = await NetworkToolbox.BenchmarkAsync(
-                NetworkToolbox.Candidates(_net.Dns.Host), CancellationToken.None);
+                NetworkToolbox.Candidates(_net.Dns.Address), CancellationToken.None);
 
             DnsResults.Clear();
             foreach (var r in results.OrderBy(r => double.IsNaN(r.LatencyMs) ? double.MaxValue : r.LatencyMs))
@@ -174,7 +193,11 @@ public partial class NetworkViewModel : ObservableObject
                     ? $"{best.Name} est le plus rapide ({best.LatencyText})."
                     : $"{best.Name} répond en {best.LatencyText} contre {current.LatencyText} pour le DNS actuel.";
         }
-        catch (Exception ex) { ToolStatus = $"Erreur : {ex.Message}"; }
+        catch (Exception ex)
+        {
+            Log.Error("Comparaison DNS interrompue.", ex);
+            ToolStatus = $"Erreur : {ex.Message}";
+        }
         finally { IsToolBusy = false; }
     }
 
@@ -183,17 +206,21 @@ public partial class NetworkViewModel : ObservableObject
     {
         if (SelectedDns is not { } target) { ToolStatus = "Sélectionnez un serveur DNS dans la liste."; return Task.CompletedTask; }
 
+        var nl = Environment.NewLine;
+        var scope = _net.InterfaceSupportsIPv6 ? "IPv4 et IPv6" : "IPv4";
         if (!Ask("changer de DNS",
-                $"Configurer {target.Name} ({target.Primary}) sur « {_net.InterfaceName} » ?{Environment.NewLine}{Environment.NewLine}" +
-                "Le DNS d'origine est sauvegardé et reste rétablissable avec « Rétablir le DNS d'origine », " +
-                "même après un redémarrage."))
+                $"Configurer {target.Name} ({target.Primary}) sur « {_net.InterfaceName} » ({scope}) ?{nl}{nl}" +
+                "Le DNS d'origine de cette interface est sauvegardé et reste rétablissable avec " +
+                "« Rétablir le DNS d'origine », même après un redémarrage."))
             return Task.CompletedTask;
 
-        return RunTool(() => NetworkToolbox.ApplyDnsAsync(_net.InterfaceName, _net.InterfaceId, target), rediscover: true);
+        return RunTool(() => NetworkToolbox.ApplyDnsAsync(_net.InterfaceName, _net.InterfaceId,
+                                                          _net.InterfaceSupportsIPv6, target), rediscover: true);
     }
 
     [RelayCommand]
-    private Task RevertDns() => RunTool(NetworkToolbox.RevertDnsAsync, rediscover: true);
+    private Task RevertDns() =>
+        RunTool(() => NetworkToolbox.RevertDnsAsync(_net.InterfaceId, _net.InterfaceName), rediscover: true);
 
     [RelayCommand]
     private void SelectSection(string section) => Section = section;
@@ -223,10 +250,21 @@ public partial class NetworkViewModel : ObservableObject
 
     [ObservableProperty] private string _connectionStatus = "";
 
-    [RelayCommand]
-    private void RefreshConnections()
+    private async Task SafeRefreshConnections()
     {
-        _connections.Refresh();
+        try { await RefreshConnections(); }
+        catch (Exception ex)
+        {
+            Log.Error("Rafraîchissement des connexions interrompu.", ex);
+            ConnectionStatus = $"Erreur : {ex.Message}";
+        }
+    }
+
+    /// <summary>Lecture de la table TCP et des processus hors du thread d'interface.</summary>
+    [RelayCommand]
+    private async Task RefreshConnections()
+    {
+        await _connections.RefreshAsync();
         ConnectionStatus = _connections.LastError.Length > 0
             ? _connections.LastError
             : $"{_connections.Connections.Count} connexion(s) TCP · "
@@ -236,19 +274,18 @@ public partial class NetworkViewModel : ObservableObject
     private bool HasSelection() => SelectedConnection is not null;
 
     [RelayCommand(CanExecute = nameof(HasSelection))]
-    private void KillSelectedProcess()
+    private async Task KillSelectedProcess()
     {
         if (SelectedConnection is not { } c) return;
 
-        var answer = MessageBox.Show(
-            $"Terminer {c.ProcessName} (PID {c.Pid}) ?{Environment.NewLine}{Environment.NewLine}" +
-            "Le processus est tué sans enregistrer son travail en cours.",
-            "AETHER — terminer le processus", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (!Ask("terminer le processus",
+                $"Terminer {c.ProcessName} (PID {c.Pid}) ?{Environment.NewLine}{Environment.NewLine}" +
+                "Le processus est tué sans enregistrer son travail en cours."))
+            return;
 
-        if (answer != MessageBoxResult.OK) return;
-
-        ConnectionStatus = ConnectionService.KillProcess(c.Pid);
-        RefreshConnections();
+        var message = ConnectionService.KillProcess(c);
+        await SafeRefreshConnections();
+        ConnectionStatus = message;
     }
 
     // ------------------------------------------------------------------ Test de débit
@@ -277,10 +314,12 @@ public partial class NetworkViewModel : ObservableObject
         SpeedProgress = 0;
         SpeedDownText = SpeedUpText = SpeedLatencyText = "…";
         _speedCts = new CancellationTokenSource();
+        var token = _speedCts.Token;
 
         try
         {
-            var r = await _speed.RunAsync(_speedCts.Token);
+            // Hors du thread d'interface : sinon chaque lecture réseau repasserait par le Dispatcher.
+            var r = await Task.Run(() => _speed.RunAsync(token));
             SpeedDownText = Fmt(r.DownloadMbps);
             SpeedUpText = Fmt(r.UploadMbps);
             SpeedLatencyText = double.IsNaN(r.LatencyMs) ? "—" : $"{r.LatencyMs:0.#}";
@@ -306,6 +345,7 @@ public partial class NetworkViewModel : ObservableObject
     {
         IsDiscovering = true;
         try { await _net.RediscoverAsync(); }
+        catch (Exception ex) { Log.Error("Redécouverte réseau impossible.", ex); }
         finally { IsDiscovering = false; }
     }
 
@@ -360,13 +400,28 @@ public partial class NetworkViewModel : ObservableObject
         var jittered = _net.Nodes.Where(n => n.IsMeasurable && n.Jitter >= 0).ToList();
         JitterText = jittered.Count == 0 ? "—" : $"{jittered.Min(n => n.Jitter):0.#}";
 
-        var v = NetworkDiagnosis.Evaluate(_net);
-        VerdictTitle = v.Title;
-        VerdictDetail = v.Detail;
-        VerdictSeverity = v.Severity;
+        if (_net.IsDiscovering)
+        {
+            VerdictTitle = "ANALYSE EN COURS";
+            VerdictDetail = "Changement de réseau détecté : découverte du nouveau chemin…";
+            VerdictSeverity = 1;
+        }
+        else
+        {
+            var v = NetworkDiagnosis.Evaluate(_net);
+            VerdictTitle = v.Title;
+            VerdictDetail = v.Detail;
+            VerdictSeverity = v.Severity;
+        }
 
         OnPropertyChanged(nameof(InterfaceName));
         OnPropertyChanged(nameof(LinkSpeedText));
+
+        if (_net.InterfaceId != _lastInterfaceId)
+        {
+            _lastInterfaceId = _net.InterfaceId;
+            OnPropertyChanged(nameof(HasDnsBackup));
+        }
     }
 
     partial void OnPacketLossChanged(double value)

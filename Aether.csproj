@@ -2,7 +2,12 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- .NET 10 (LTS) : .NET 8 n'est plus pris en charge après novembre 2026. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Version>1.2.0</Version>
+    <Product>AETHER</Product>
+    <Company>AETHER</Company>
+    <Copyright>© 2026 AETHER</Copyright>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -10,7 +15,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <!-- WFAC010 réclame le DPI via l'API WinForms : sans objet ici, la fenêtre est en WPF
          et son DPI par moniteur est correctement déclaré dans app.manifest. -->
-    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+    <NoWarn>$(NoWarn);WFAC010;WFO0003</NoWarn>
     <AssemblyName>Aether</AssemblyName>
     <RootNamespace>Aether</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -24,11 +29,24 @@
     <Using Remove="System.Drawing" />
   </ItemGroup>
 
+  <!-- Le projet de tests et l'installeur vivent sous ce dossier : ils ne font pas partie de l'application. -->
   <ItemGroup>
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <Compile Remove="tests\**" />
+    <Page Remove="tests\**" />
+    <None Remove="tests\**" />
+    <None Remove="installer\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aether.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
-    <PackageReference Include="System.Management" Version="10.0.2" />
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageReference Include="System.Management" Version="10.0.12" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.12" />
   </ItemGroup>
 
 </Project>

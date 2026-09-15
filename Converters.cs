@@ -18,21 +18,51 @@ public class HealthToBrushConverter : IValueConverter
     public object ConvertBack(object v, Type t, object p, CultureInfo c) => Binding.DoNothing;
 }
 
-/// <summary>État système -> pinceau d'accent.</summary>
+/// <summary>État système -> clé d'accent.</summary>
+internal static class StateAccent
+{
+    public static string Key(object? state) => state switch
+    {
+        SystemState.Critical => "AccentDanger",
+        SystemState.Elevated => "AccentWarn",
+        SystemState.Analyzing => "AccentAi",
+        _ => "AccentOptimal"
+    };
+}
+
+/// <summary>État système -> pinceau d'accent (Fill, Stroke, Foreground…).</summary>
 public class StateToBrushConverter : IValueConverter
 {
-    public object Convert(object value, Type t, object p, CultureInfo c)
-    {
-        var key = value switch
-        {
-            SystemState.Critical => "AccentDangerBrush",
-            SystemState.Elevated => "AccentWarnBrush",
-            SystemState.Analyzing => "AccentAiBrush",
-            _ => "AccentOptimalBrush"
-        };
-        return Application.Current.Resources[key];
-    }
+    public object Convert(object value, Type t, object p, CultureInfo c) =>
+        Application.Current.Resources[StateAccent.Key(value) + "Brush"];
+
     public object ConvertBack(object v, Type t, object p, CultureInfo c) => Binding.DoNothing;
+}
+
+/// <summary>
+/// État système -> couleur. Nécessaire pour les propriétés de type Color (GradientStop,
+/// DropShadowEffect) : un pinceau y est refusé et la liaison échoue sans erreur visible.
+/// </summary>
+public class StateToColorConverter : IValueConverter
+{
+    public object Convert(object value, Type t, object p, CultureInfo c) =>
+        Application.Current.Resources[StateAccent.Key(value) + "Color"] is Color color ? color : Colors.Transparent;
+
+    public object ConvertBack(object v, Type t, object p, CultureInfo c) => Binding.DoNothing;
+}
+
+/// <summary>
+/// Valeur == paramètre -> vrai. En retour, vrai renvoie le paramètre : un groupe de boutons
+/// radio lié à une seule propriété (page active) reste synchronisé dans les deux sens,
+/// y compris quand la page change par raccourci clavier.
+/// </summary>
+public class EqualsConverter : IValueConverter
+{
+    public object Convert(object value, Type t, object p, CultureInfo c) =>
+        string.Equals(value?.ToString(), p as string, StringComparison.Ordinal);
+
+    public object ConvertBack(object v, Type t, object p, CultureInfo c) =>
+        v is true ? p : Binding.DoNothing;
 }
 
 /// <summary>bool -> bool inversé.</summary>

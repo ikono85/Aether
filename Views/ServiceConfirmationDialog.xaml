@@ -39,7 +39,7 @@
             <!-- Badge de niveau -->
             <Border Grid.Row="1" HorizontalAlignment="Left" Margin="0,16,0,0" CornerRadius="5" Padding="8,3"
                     Background="{Binding LevelBrush}" Opacity="0.9">
-                <TextBlock Text="{Binding LevelLabel}" FontSize="10" FontWeight="Bold"
+                <TextBlock Text="{Binding LevelLabel}" FontSize="{StaticResource FontSizeCaption}" FontWeight="Bold"
                            Foreground="{StaticResource CarbonBrush}" />
             </Border>
 

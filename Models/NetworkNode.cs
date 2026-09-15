@@ -9,7 +9,14 @@ public partial class NetworkNode : ObservableObject
 {
     public string Label { get; set; } = "";
 
-    [ObservableProperty] private string _host = "…";   // IP ou hostname réel
+    /// <summary>Affichage : IP, ou nom PTR quand il est connu.</summary>
+    [ObservableProperty] private string _host = "…";
+
+    /// <summary>
+    /// Adresse IP réellement sondée. Distincte de <see cref="Host"/> : beaucoup de noms PTR de
+    /// routeurs ne se résolvent pas dans l'autre sens, pinger le nom rendrait le maillon muet.
+    /// </summary>
+    [ObservableProperty] private string _address = "";
     [ObservableProperty] private double _rtt = -1;      // ms, -1 = inconnu
     [ObservableProperty] private double _loss;          // 0..100 %
     [ObservableProperty] private bool _reachable;
@@ -90,6 +97,24 @@ public partial class NetworkNode : ObservableObject
         }
 
         BuildSparkline();
+    }
+
+    /// <summary>Oublie tout ce qui a été mesuré : le maillon désigne désormais une autre machine.</summary>
+    public void Reset()
+    {
+        _history.Clear();
+        Jitter = -1;
+        OnPropertyChanged(nameof(Jitter));
+        OnPropertyChanged(nameof(JitterText));
+        BuildSparkline();
+
+        Address = "";
+        Host = "…";
+        Rtt = -1;
+        Loss = 0;
+        Reachable = false;
+        EverAnswered = false;
+        Unresolved = true;
     }
 
     private void BuildSparkline()

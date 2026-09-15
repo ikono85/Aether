@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
+using Aether.Services.Infrastructure;
 
 namespace Aether.Services.Optimization;
 
@@ -18,6 +19,19 @@ public class VisualFxOffAction : OptimizationAction
 
     /// <summary>Masque « meilleures performances » utilisé par le panneau Performances de Windows.</summary>
     private static readonly byte[] PerfMask = { 0x90, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00 };
+
+    private static readonly HashSet<string> Targets = new(StringComparer.Ordinal)
+    {
+        @"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects|VisualFXSetting",
+        @"Control Panel\Desktop|UserPreferencesMask",
+        @"Control Panel\Desktop|DragFullWindows",
+        @"Control Panel\Desktop|MenuShowDelay",
+        @"Control Panel\Desktop\WindowMetrics|MinAnimate",
+        @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize|EnableTransparency",
+    };
+
+    protected override bool AllowsRegistryTarget(string hive, string subKey, string valueName) =>
+        hive == "HKCU" && Targets.Contains($"{subKey}|{valueName}");
 
     public override ActionResult Apply(RestoreStore store, CancellationToken ct)
     {
@@ -46,16 +60,18 @@ public class VisualFxOffAction : OptimizationAction
             Broadcast();
             return ActionResult.Applied("Effets visuels coupés (animations, ombres, transparence).");
         }
-        catch (Exception ex) { return ActionResult.Failed(ex.Message); }
+        catch (Exception ex)
+        {
+            Log.Warn($"[{Id}] Application partielle.", ex);
+            return ActionResult.Failed(ex.Message);
+        }
     }
 
     public override ActionResult Revert(RestoreStore store)
     {
-        int n = RevertRegistry(store);
-        store.Clear(Id);
+        var reg = RevertRegistry(store);
         Broadcast();
-        return n == 0 ? ActionResult.Skipped("Aucun effet à rétablir.")
-                      : ActionResult.Reverted("Effets visuels Windows rétablis.");
+        return FinishRevert(store, reg, "Effets visuels Windows rétablis.", "Aucun effet à rétablir.");
     }
 
     /// <summary>Applique le changement sans redémarrer la session.</summary>
@@ -75,19 +91,28 @@ public class UsbPowerKeepAction : OptimizationAction
     private const string Setting = "48e6b7a6-50f5-4782-a5d4-53bb8f07e226";
     private const string BackupKey = "usb_power/selective_suspend";
 
+    private const string UsbRoot = @"SYSTEM\CurrentControlSet\Enum\USB";
+    private static readonly Regex DevicePath =
+        new(@"^SYSTEM\\CurrentControlSet\\Enum\\USB\\[^\\]+\\[^\\]+\\Device Parameters$", RegexOptions.IgnoreCase);
+
+    protected override bool AllowsRegistryTarget(string hive, string subKey, string valueName) =>
+        hive == "HKLM" && valueName == "EnhancedPowerManagementEnabled" && DevicePath.IsMatch(subKey);
+
     public override ActionResult Apply(RestoreStore store, CancellationToken ct)
     {
         if (!store.Contains(BackupKey))
         {
             var current = CurrentIndexes();
-            if (current != null) store.Write(BackupKey, current);
+            if (current == null) return ActionResult.Failed("Réglage USB actuel illisible : rien n'a été modifié.");
+            store.Write(BackupKey, current);
         }
 
-        var (code, output) = Run("powercfg", $"/setacvalueindex SCHEME_CURRENT {SubGroup} {Setting} 0");
-        if (code != 0) return ActionResult.Failed($"Réglage refusé : {output.Trim()}");
+        var (code, output) = Run("powercfg", "/setacvalueindex", "SCHEME_CURRENT", SubGroup, Setting, "0");
+        if (code != 0) return ActionResult.Failed($"Réglage refusé : {FirstLine(output)}");
 
-        Run("powercfg", $"/setdcvalueindex SCHEME_CURRENT {SubGroup} {Setting} 0");
-        Run("powercfg", "/setactive SCHEME_CURRENT");
+        Run("powercfg", "/setdcvalueindex", "SCHEME_CURRENT", SubGroup, Setting, "0");
+        Run("powercfg", "/setactive", "SCHEME_CURRENT");
+        Log.Audit($"[{Id}] Suspension sélective USB désactivée (AC/DC).");
 
         int devices = IsElevated ? DisableDeviceSaving(store) : 0;
         string note = IsElevated
@@ -100,14 +125,17 @@ public class UsbPowerKeepAction : OptimizationAction
     public override ActionResult Revert(RestoreStore store)
     {
         // Valeur par défaut de Windows : suspension sélective activée sur secteur et batterie.
-        var previous = store.Read<PowerIndexes>(BackupKey) ?? new PowerIndexes(1, 1);
-        RevertRegistry(store);
+        var saved = store.Read<PowerIndexes>(BackupKey);
+        var previous = saved is { Ac: 0 or 1, Dc: 0 or 1 } ? saved : new PowerIndexes(1, 1);
 
-        var (code, output) = Run("powercfg", $"/setacvalueindex SCHEME_CURRENT {SubGroup} {Setting} {previous.Ac}");
-        Run("powercfg", $"/setdcvalueindex SCHEME_CURRENT {SubGroup} {Setting} {previous.Dc}");
-        Run("powercfg", "/setactive SCHEME_CURRENT");
+        var reg = RevertRegistry(store);
 
-        if (code != 0) return ActionResult.Failed($"Restauration refusée : {output.Trim()}");
+        var (code, output) = Run("powercfg", "/setacvalueindex", "SCHEME_CURRENT", SubGroup, Setting, previous.Ac.ToString());
+        Run("powercfg", "/setdcvalueindex", "SCHEME_CURRENT", SubGroup, Setting, previous.Dc.ToString());
+        Run("powercfg", "/setactive", "SCHEME_CURRENT");
+
+        if (code != 0) return ActionResult.Failed($"Restauration refusée : {FirstLine(output)}");
+        if (reg.Failed > 0) return FinishRevert(store, reg, "", "");
 
         store.Clear(Id);
         return ActionResult.Reverted("Gestion d'énergie USB d'origine rétablie.");
@@ -122,7 +150,7 @@ public class UsbPowerKeepAction : OptimizationAction
     /// </summary>
     private static PowerIndexes? CurrentIndexes()
     {
-        var (code, output) = Run("powercfg", $"/query SCHEME_CURRENT {SubGroup} {Setting}");
+        var (code, output) = Run("powercfg", "/query", "SCHEME_CURRENT", SubGroup, Setting);
         if (code != 0) return null;
 
         var matches = Regex.Matches(output, @"0x([0-9a-fA-F]{8})");
@@ -137,10 +165,9 @@ public class UsbPowerKeepAction : OptimizationAction
     private int DisableDeviceSaving(RestoreStore store)
     {
         int n = 0;
-        const string root = @"SYSTEM\CurrentControlSet\Enum\USB";
         try
         {
-            using var usb = Registry.LocalMachine.OpenSubKey(root);
+            using var usb = Registry.LocalMachine.OpenSubKey(UsbRoot);
             if (usb == null) return 0;
 
             foreach (var device in usb.GetSubKeyNames())
@@ -150,7 +177,7 @@ public class UsbPowerKeepAction : OptimizationAction
 
                 foreach (var instance in dev.GetSubKeyNames())
                 {
-                    var path = $@"{root}\{device}\{instance}\Device Parameters";
+                    var path = $@"{UsbRoot}\{device}\{instance}\Device Parameters";
                     try
                     {
                         using var probe = Registry.LocalMachine.OpenSubKey(path);
@@ -160,11 +187,11 @@ public class UsbPowerKeepAction : OptimizationAction
                             "EnhancedPowerManagementEnabled", 0, RegistryValueKind.DWord);
                         n++;
                     }
-                    catch { /* périphérique protégé */ }
+                    catch (Exception ex) { Log.Warn($"[{Id}] Périphérique ignoré : {path}", ex); }
                 }
             }
         }
-        catch { }
+        catch (Exception ex) { Log.Warn($"[{Id}] Énumération USB impossible.", ex); }
         return n;
     }
 }
@@ -173,6 +200,18 @@ public class UsbPowerKeepAction : OptimizationAction
 public class GameBarOffAction : OptimizationAction
 {
     public override string Id => "gamebar";
+
+    private static readonly HashSet<string> Targets = new(StringComparer.Ordinal)
+    {
+        @"HKCU|System\GameConfigStore|GameDVR_Enabled",
+        @"HKCU|Software\Microsoft\Windows\CurrentVersion\GameDVR|AppCaptureEnabled",
+        @"HKCU|Software\Microsoft\GameBar|UseNexusForGameBarEnabled",
+        @"HKCU|Software\Microsoft\GameBar|ShowStartupPanel",
+        @"HKLM|SOFTWARE\Policies\Microsoft\Windows\GameDVR|AllowGameDVR",
+    };
+
+    protected override bool AllowsRegistryTarget(string hive, string subKey, string valueName) =>
+        Targets.Contains($"{hive}|{subKey}|{valueName}");
 
     public override ActionResult Apply(RestoreStore store, CancellationToken ct)
     {
@@ -202,16 +241,15 @@ public class GameBarOffAction : OptimizationAction
 
             return ActionResult.Applied($"Game Bar et capture en fond désactivées ({scope}).");
         }
-        catch (Exception ex) { return ActionResult.Failed(ex.Message); }
+        catch (Exception ex)
+        {
+            Log.Warn($"[{Id}] Application partielle.", ex);
+            return ActionResult.Failed(ex.Message);
+        }
     }
 
-    public override ActionResult Revert(RestoreStore store)
-    {
-        int n = RevertRegistry(store);
-        store.Clear(Id);
-        return n == 0 ? ActionResult.Skipped("Rien à rétablir.")
-                      : ActionResult.Reverted("Xbox Game Bar rétablie.");
-    }
+    public override ActionResult Revert(RestoreStore store) =>
+        FinishRevert(store, RevertRegistry(store), "Xbox Game Bar rétablie.", "Rien à rétablir.");
 }
 
 /// <summary>
@@ -260,65 +298,42 @@ public class OverlayCleanerAction : OptimizationAction
         ActionResult.Skipped("Détection seule : aucune modification n'a été faite.");
 }
 
-/// <summary>Passe en démarrage manuel une courte liste de services Windows non essentiels.</summary>
+/// <summary>
+/// Ancien module « Service Trimmer », DÉPLACÉ dans l'onglet Services (profil « Services rarement
+/// utiles ») : deux mécanismes modifiant les mêmes services avec deux journaux distincts
+/// affichaient des états contradictoires. La classe ne sert plus qu'à annuler une application
+/// faite par une version précédente.
+/// </summary>
 public class ServiceTrimmerAction : OptimizationAction
 {
     public override string Id => "services";
     public override bool RequiresAdmin => true;
 
-    /// <summary>Liste volontairement courte et conservatrice : aucun service critique.</summary>
-    private static readonly (string Name, string Label)[] Targets =
-    {
-        ("Fax",             "Télécopie"),
-        ("RemoteRegistry",  "Registre à distance"),
-        ("RetailDemo",      "Mode démonstration magasin"),
-        ("MapsBroker",      "Cartes hors connexion"),
-        ("WMPNetworkSvc",   "Partage Windows Media Player"),
-        ("PhoneSvc",        "Service de téléphonie"),
-    };
+    private static readonly string[] Targets =
+        { "Fax", "RemoteRegistry", "RetailDemo", "MapsBroker", "WMPNetworkSvc", "PhoneSvc" };
 
-    private const int Manual = 3;
+    protected override bool AllowsRegistryTarget(string hive, string subKey, string valueName) =>
+        hive == "HKLM" && valueName == "Start" &&
+        Targets.Any(t => subKey.Equals($@"SYSTEM\CurrentControlSet\Services\{t}", StringComparison.Ordinal));
 
-    public override ActionResult Apply(RestoreStore store, CancellationToken ct)
-    {
-        if (!IsElevated) return ActionResult.Skipped("Droits administrateur requis.");
-
-        var changed = new List<string>();
-
-        foreach (var (name, label) in Targets)
-        {
-            ct.ThrowIfCancellationRequested();
-            var path = $@"SYSTEM\CurrentControlSet\Services\{name}";
-
-            try
-            {
-                using var probe = Registry.LocalMachine.OpenSubKey(path);
-                if (probe == null) continue;                                   // service absent
-                if (probe.GetValue("Start") is not int start || start >= Manual) continue;
-
-                SetRegistry(store, Registry.LocalMachine, path, "Start", Manual, RegistryValueKind.DWord);
-                Run("sc", $"stop {name}", 10_000);
-                changed.Add(label);
-            }
-            catch { /* service protégé */ }
-        }
-
-        return changed.Count == 0
-            ? ActionResult.Skipped("Tous ces services sont déjà au minimum.")
-            : ActionResult.Applied($"{changed.Count} service(s) en démarrage manuel : {string.Join(", ", changed)}.");
-    }
+    public override ActionResult Apply(RestoreStore store, CancellationToken ct) =>
+        ActionResult.Skipped("Module déplacé : onglet Services, profil « Services rarement utiles ».");
 
     public override ActionResult Revert(RestoreStore store)
     {
         if (!IsElevated) return ActionResult.Skipped("Droits administrateur requis.");
-        int n = RevertRegistry(store);
-        store.Clear(Id);
-        return n == 0 ? ActionResult.Skipped("Aucun service à rétablir.")
-                      : ActionResult.Reverted($"{n} service(s) remis en démarrage automatique.");
+        var reg = RevertRegistry(store);
+        return FinishRevert(store, reg, $"{reg.Restored} service(s) remis dans leur type de démarrage d'origine.",
+                            "Aucun service à rétablir.");
     }
 }
 
-/// <summary>Coupe la collecte de données de diagnostic de Windows.</summary>
+/// <summary>
+/// Ancien module « Telemetry Block », DÉPLACÉ dans l'onglet Services (profil « Télémétrie
+/// Windows »). Conservé uniquement pour annuler une application faite par une version précédente
+/// (services, tâches planifiées et stratégie AllowTelemetry, qui n'avait d'effet que sur les
+/// éditions Entreprise et Éducation).
+/// </summary>
 public class TelemetryBlockAction : OptimizationAction
 {
     public override string Id => "telemetry";
@@ -334,63 +349,28 @@ public class TelemetryBlockAction : OptimizationAction
         @"\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip",
     };
 
-    private const int Disabled = 4;
+    private const string PolicyKey = @"SOFTWARE\Policies\Microsoft\Windows\DataCollection";
 
-    public override ActionResult Apply(RestoreStore store, CancellationToken ct)
-    {
-        if (!IsElevated) return ActionResult.Skipped("Droits administrateur requis.");
+    protected override bool AllowsRegistryTarget(string hive, string subKey, string valueName) =>
+        hive == "HKLM" && (
+            (subKey == PolicyKey && valueName == "AllowTelemetry") ||
+            (valueName == "Start" && Services.Any(s =>
+                subKey.Equals($@"SYSTEM\CurrentControlSet\Services\{s}", StringComparison.Ordinal))));
 
-        int services = 0, tasks = 0;
-
-        foreach (var name in Services)
-        {
-            ct.ThrowIfCancellationRequested();
-            var path = $@"SYSTEM\CurrentControlSet\Services\{name}";
-            try
-            {
-                using var probe = Registry.LocalMachine.OpenSubKey(path);
-                if (probe == null) continue;
-
-                SetRegistry(store, Registry.LocalMachine, path, "Start", Disabled, RegistryValueKind.DWord);
-                Run("sc", $"stop {name}", 10_000);
-                services++;
-            }
-            catch { }
-        }
-
-        try
-        {
-            SetRegistry(store, Registry.LocalMachine,
-                @"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
-                "AllowTelemetry", 0, RegistryValueKind.DWord);
-        }
-        catch { }
-
-        foreach (var task in Tasks)
-        {
-            ct.ThrowIfCancellationRequested();
-            var (code, _) = Run("schtasks", $"/Change /TN \"{task}\" /Disable", 10_000);
-            if (code == 0) tasks++;
-        }
-
-        store.Write("telemetry/tasks", Tasks);
-
-        return services == 0 && tasks == 0
-            ? ActionResult.Skipped("Télémétrie déjà inactive.")
-            : ActionResult.Applied($"{services} service(s) et {tasks} tâche(s) planifiée(s) de télémétrie désactivés.");
-    }
+    public override ActionResult Apply(RestoreStore store, CancellationToken ct) =>
+        ActionResult.Skipped("Module déplacé : onglet Services, profil « Télémétrie Windows ».");
 
     public override ActionResult Revert(RestoreStore store)
     {
         if (!IsElevated) return ActionResult.Skipped("Droits administrateur requis.");
 
-        int n = RevertRegistry(store);
+        var reg = RevertRegistry(store);
 
-        foreach (var task in store.Read<string[]>("telemetry/tasks") ?? Array.Empty<string>())
-            Run("schtasks", $"/Change /TN \"{task}\" /Enable", 10_000);
+        // Seules les tâches connues de ce module sont réactivées, quel que soit le contenu du journal.
+        var saved = store.Read<string[]>("telemetry/tasks") ?? Array.Empty<string>();
+        foreach (var task in saved.Where(t => Tasks.Contains(t, StringComparer.Ordinal)))
+            Run("schtasks", "/Change", "/TN", task, "/Enable");
 
-        store.Clear(Id);
-        return n == 0 ? ActionResult.Skipped("Rien à rétablir.")
-                      : ActionResult.Reverted("Télémétrie Windows rétablie dans son état d'origine.");
+        return FinishRevert(store, reg, "Télémétrie Windows rétablie dans son état d'origine.", "Rien à rétablir.");
     }
 }

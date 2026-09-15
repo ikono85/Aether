@@ -13,6 +13,9 @@ public partial class ActiveConnection : ObservableObject
     public int RemotePort { get; init; }
     public string State { get; init; } = "";
 
+    /// <summary>Heure de démarrage du processus au moment du relevé : détecte la réutilisation du PID.</summary>
+    public DateTime? ProcessStartTime { get; init; }
+
     /// <summary>
     /// Nom inverse (PTR) de l'hôte distant, résolu en arrière-plan. Vide tant que la
     /// résolution n'a pas abouti : beaucoup d'IP n'ont pas de PTR, c'est normal.
@@ -22,8 +25,12 @@ public partial class ActiveConnection : ObservableObject
     /// <summary>Identité stable d'une connexion, utilisée pour ne pas la recréer à chaque relevé.</summary>
     public string Key => $"{Pid}|{LocalAddress}:{LocalPort}|{RemoteAddress}:{RemotePort}";
 
-    public string LocalEndpoint => $"{LocalAddress}:{LocalPort}";
-    public string RemoteEndpoint => $"{RemoteAddress}:{RemotePort}";
+    public string LocalEndpoint => Endpoint(LocalAddress, LocalPort);
+    public string RemoteEndpoint => Endpoint(RemoteAddress, RemotePort);
+
+    /// <summary>Une adresse IPv6 contient déjà des « : » : la notation standard la met entre crochets.</summary>
+    private static string Endpoint(string address, int port) =>
+        address.Contains(':') ? $"[{address}]:{port}" : $"{address}:{port}";
 
     /// <summary>Ce qu'on affiche pour l'hôte distant : le PTR s'il existe, l'IP sinon.</summary>
     public string RemoteDisplay => RemoteHost.Length > 0 ? RemoteHost : RemoteAddress;
